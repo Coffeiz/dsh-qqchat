@@ -1,0 +1,7 @@
+# dsh-qqchat is a profile bundle: installing it through `dsh plugin` appends
+# this patch after the selected profile's shipped bundles.
+- insert:
+    - id: dsh-qqchat
+      name: dsh-qqchat
+      config:
+        dataDir: !!js dshHomePath('plugins/dsh-qqchat')
