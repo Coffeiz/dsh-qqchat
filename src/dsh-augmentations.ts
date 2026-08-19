@@ -4,8 +4,10 @@ import type { QQChatDisplayEvent } from './types.js'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
-    'qq-chat': {
-      kind: 'qq-chat'
+    /** QQ message that should behave as an ordinary DSH user prompt while retaining reliable QQ identity metadata. */
+    'qq-user': {
+      kind: 'user'
+      channel: 'qq'
       botId: string
       chatType: 'c2c' | 'group'
       chatId: string
@@ -13,8 +15,6 @@ declare module '@deepseek-ai/dsh-llm' {
       senderName?: string
       messageId: string
       mentioned: boolean
-      form: 'notice'
-      summary: string
     }
     'qq-chat-bootstrap': {
       kind: 'qq-chat-bootstrap'
@@ -25,7 +25,7 @@ declare module '@deepseek-ai/dsh-llm' {
 
 declare module '@deepseek-ai/dsh-session/types' {
   interface SessionEventMap {
-    /** QQ transcript row for the DSH Web conversation surface. Log-only; never enters model history. */
+    /** QQ transcript row used only for messages that do not enter the Agent/model surface. */
     'qqchat/message': QQChatDisplayEvent
   }
 }
