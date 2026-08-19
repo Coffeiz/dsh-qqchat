@@ -1,0 +1,62 @@
+{
+  "name": "dsh-qqchat",
+  "version": "0.1.0-alpha.1",
+  "description": "QQ private/group chat channel plugin for DeepSeek Harness, with QR bot binding, group memory and DSH-native UI.",
+  "private": true,
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "src",
+    "client-src",
+    "cordis.patch.yml",
+    "README.md",
+    "docs"
+  ],
+  "scripts": {
+    "build:client": "node scripts/build-client.mjs",
+    "build": "npm run build:client",
+    "test": "node --test tests/*.test.js",
+    "check": "node --check src/index.js && node --check src/db.js && node --check src/qq-auth.js && node --check src/qq-api.js && node --check src/qq-gateway.js && node --check src/memory.js && node --check src/agent-bridge.js && node --check src/rpc.js && node --check client-src/plugin.cjs"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-agent": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-client-connection": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-client-ui-settings": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-session": "^0.1.0-rc.8"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-client-connection": { "optional": true },
+    "@deepseek-ai/dsh-client-ui-settings": { "optional": true }
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/Coffeiz/dsh-qqchat.git"
+  }
+}
