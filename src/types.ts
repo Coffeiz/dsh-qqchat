@@ -3,7 +3,30 @@ export type MessageDirection = 'inbound' | 'outbound'
 export type MemoryScopeType = 'group' | 'member'
 export type MemoryDocType = 'profile' | 'summary' | 'daily' | 'memory' | 'pattern'
 export type ReplyFormat = 'smart' | 'markdown' | 'compat'
+export type GroupReceiveMode = 'auto' | 'mention' | 'silent'
 export type GatewayStatus = 'offline' | 'connecting' | 'online' | 'error'
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
+
+export interface QQChatRuntimeSettings {
+  groupReceiveMode: GroupReceiveMode
+  replyFormat: ReplyFormat
+  groupMembersCanUseTools: boolean
+  ownerUserId: string
+}
+
+export interface QQChatRuntimeSettingsPatch {
+  groupReceiveMode?: GroupReceiveMode
+  replyFormat?: ReplyFormat
+  groupMembersCanUseTools?: boolean
+  ownerUserId?: string
+}
+
+export interface PluginLogEntry {
+  id: number
+  time: number
+  level: LogLevel
+  message: string
+}
 
 export interface LoggerLike {
   error?: (...args: unknown[]) => void
@@ -90,6 +113,22 @@ export interface GroupListRow extends GroupRow {
   message_count: number
 }
 
+export interface DirectChatListRow extends MemberRow {
+  last_message_at: number | null
+  message_count: number
+}
+
+export interface ChatTargetRow {
+  chatType: ChatType
+  rowId: number
+  accountId: number
+  platformId: string
+  displayName: string
+  dshSessionId: string | null
+  lastMessageAt: number | null
+  messageCount: number
+}
+
 export interface GroupDefaults {
   name?: string
   enabled?: boolean
@@ -173,6 +212,19 @@ export interface OutboxRow {
 }
 
 export type MemoryDocuments = Partial<Record<MemoryDocType, string>>
+
+export interface QQChatDisplayEvent {
+  messageId: string
+  chatType: ChatType
+  chatId: string
+  direction: MessageDirection
+  senderId: string
+  senderName: string
+  content: string
+  quotedText: string
+  mentioned: boolean
+  createdAt: number
+}
 
 export interface QQNormalizedMessage {
   platform: 'qq'

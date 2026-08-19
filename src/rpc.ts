@@ -1,12 +1,14 @@
 import type { ConnectionRpcHandler } from '@deepseek-ai/dsh-client-connection'
 import type { QQChatRuntime } from './runtime.js'
 import type {
+  ChatType,
   GroupListRow,
   GroupPatch,
   GroupRow,
   MemoryDocuments,
   MessageRow,
   PublicAccountRow,
+  QQChatRuntimeSettingsPatch,
 } from './types.js'
 
 type RpcSuccess<T> = { ok: true; value: T }
@@ -25,12 +27,11 @@ export function createQQChatRpc(runtime: QQChatRuntime): ConnectionRpcHandler {
           return ok({
             accounts: runtime.db.publicAccounts().map(publicAccount),
             databasePath: runtime.db.path,
+            settings: runtime.settings(),
             config: {
               agentPreset: runtime.config.agentPreset || null,
               provider: runtime.config.provider || null,
               model: runtime.config.model || null,
-              groupRequiresAt: runtime.config.groupRequiresAt,
-              groupReadEnabled: runtime.config.groupReadEnabled,
               reflectionIdleMs: runtime.config.reflectionIdleMs,
               reflectionBatchSize: runtime.config.reflectionBatchSize,
             },
@@ -56,6 +57,75 @@ export function createQQChatRpc(runtime: QQChatRuntime): ConnectionRpcHandler {
           runtime.db.setAccountEnabled(id, false)
           await runtime.restartGateway(id)
           return ok(true)
+        }
+        case 'settings/get':
+          return ok({
+            settings: runtime.settings(),
+            members: runtime.db.listKnownMembers().map(member => ({
+              id: Number(member.id),
+              platformUserId: member.platform_user_id,
+              displayName: member.display_name || '',
+              lastSeenAt: Number(member.last_seen_at),
+            })),
+          })
+        case 'settings/update':
+          return ok({ settings: runtime.updateSettings(asSettingsPatch(asRecord(payload)?.patch)) })
+        case 'logs/list': {
+          const limit = Math.max(1, Math.min(500, Number(asRecord(payload)?.limit || 200)))
+          return ok({ logs: runtime.logger.list(limit) })
+        }
+        case 'chats/list':
+          return ok({ chats: runtime.listChats().map(chat => ({
+            chatType: chat.chatType,
+            rowId: chat.rowId,
+            accountId: chat.accountId,
+            platformId: chat.platformId,
+            displayName: chat.displayName,
+            dshSessionId: chat.dshSessionId,
+            lastMessageAt: chat.lastMessageAt,
+            messageCount: chat.messageCount,
+          })) })
+        case 'chat/ensure': {
+          const chatType = requireChatType(payload)
+          const rowId = requireNumber(payload, 'rowId')
+          return ok({ sessionId: await runtime.ensureChatSession(chatType, rowId) })
+        }
+        case 'chat/send': {
+          const chatType = requireChatType(payload)
+          const rowId = requireNumber(payload, 'rowId')
+          const content = requireString(payload, 'content')
+          return ok({ sessionId: await runtime.sendActive(chatType, rowId, content) })
+        }
+        case 'chat/info': {
+          const sessionId = requireString(payload, 'sessionId')
+          const group = runtime.db.groupBySession(sessionId)
+          if (group) {
+            const view = runtime.memory.memoryView(Number(group.id))
+            if (!view) throw new Error('群不存在')
+            return ok({
+              chatType: 'group' as const,
+              rowId: Number(group.id),
+              title: group.name || `QQ群 ${shortId(group.platform_group_id)}`,
+              platformId: group.platform_group_id,
+              memory: normalizeMemory(view.groupMemory),
+              members: view.members.map(member => ({
+                id: Number(member.id),
+                platformUserId: member.platform_user_id,
+                displayName: member.display_name || '',
+                memory: normalizeMemory(member.memory),
+              })),
+            })
+          }
+          const member = runtime.db.memberBySession(sessionId)
+          if (!member) throw new Error('不是 QQ Chat session')
+          return ok({
+            chatType: 'c2c' as const,
+            rowId: Number(member.id),
+            title: member.display_name || `QQ 用户 ${shortId(member.platform_user_id)}`,
+            platformId: member.platform_user_id,
+            memory: normalizeMemory(runtime.db.memoryDocs('member', Number(member.id))),
+            members: [],
+          })
         }
         case 'groups/list':
           return ok({ groups: runtime.db.listGroups().map(publicGroup) })
@@ -90,10 +160,8 @@ export function createQQChatRpc(runtime: QQChatRuntime): ConnectionRpcHandler {
         }
         case 'group/send': {
           const id = requireNumber(payload, 'groupId')
-          const content = requireString(payload, 'content').trim()
-          if (!content) throw new Error('消息不能为空')
-          await runtime.sendActiveGroup(id, content)
-          return ok(true)
+          const content = requireString(payload, 'content')
+          return ok({ sessionId: await runtime.sendActive('group', id, content) })
         }
         case 'group/reflect': {
           const id = requireNumber(payload, 'groupId')
@@ -148,13 +216,19 @@ function normalizeMemory(memory: MemoryDocuments) {
 
 function requireString(payload: unknown, key: string): string {
   const value = asRecord(payload)?.[key]
-  if (typeof value !== 'string' || !value) throw new Error(`${key} 必须是非空字符串`)
-  return value
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`${key} 必须是非空字符串`)
+  return value.trim()
 }
 
 function requireNumber(payload: unknown, key: string): number {
   const value = Number(asRecord(payload)?.[key])
   if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${key} 必须是正整数`)
+  return value
+}
+
+function requireChatType(payload: unknown): ChatType {
+  const value = asRecord(payload)?.chatType
+  if (value !== 'group' && value !== 'c2c') throw new Error('chatType 必须是 group 或 c2c')
   return value
 }
 
@@ -171,4 +245,23 @@ function asGroupPatch(value: unknown): GroupPatch {
   if (typeof record.requiresAt === 'boolean') patch.requiresAt = record.requiresAt
   if (typeof record.readEnabled === 'boolean') patch.readEnabled = record.readEnabled
   return patch
+}
+
+function asSettingsPatch(value: unknown): QQChatRuntimeSettingsPatch {
+  const record = asRecord(value)
+  if (!record) return {}
+  const patch: QQChatRuntimeSettingsPatch = {}
+  if (record.groupReceiveMode === 'auto' || record.groupReceiveMode === 'mention' || record.groupReceiveMode === 'silent') {
+    patch.groupReceiveMode = record.groupReceiveMode
+  }
+  if (record.replyFormat === 'smart' || record.replyFormat === 'markdown' || record.replyFormat === 'compat') {
+    patch.replyFormat = record.replyFormat
+  }
+  if (typeof record.groupMembersCanUseTools === 'boolean') patch.groupMembersCanUseTools = record.groupMembersCanUseTools
+  if (typeof record.ownerUserId === 'string') patch.ownerUserId = record.ownerUserId
+  return patch
+}
+
+function shortId(value: string): string {
+  return value.length > 10 ? `…${value.slice(-10)}` : value
 }

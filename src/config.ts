@@ -1,6 +1,6 @@
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
-import type { QQChatConfig, QQChatConfigInput, ReplyFormat } from './types.js'
+import type { GroupReceiveMode, QQChatConfig, QQChatConfigInput, QQChatRuntimeSettings, ReplyFormat } from './types.js'
 
 const DEFAULT_CONFIG = Object.freeze({
   source: 'dsh-qqchat',
@@ -40,6 +40,18 @@ export function resolveConfig(input: QQChatConfigInput = {}): QQChatConfig {
     reflectionMaxMessages: positiveInt(input.reflectionMaxMessages, DEFAULT_CONFIG.reflectionMaxMessages),
     memoryMaxTokens: positiveInt(input.memoryMaxTokens, DEFAULT_CONFIG.memoryMaxTokens),
   })
+}
+
+export function defaultRuntimeSettings(config: QQChatConfig): QQChatRuntimeSettings {
+  const groupReceiveMode: GroupReceiveMode = !config.groupChatEnabled
+    ? 'silent'
+    : config.groupRequiresAt ? 'mention' : 'auto'
+  return {
+    groupReceiveMode,
+    replyFormat: config.replyFormat,
+    groupMembersCanUseTools: false,
+    ownerUserId: '',
+  }
 }
 
 function positiveInt(value: unknown, fallback: number): number {

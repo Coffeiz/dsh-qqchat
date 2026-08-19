@@ -1,11 +1,26 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { DshQQBridge } from './agent-bridge.js'
+import { defaultRuntimeSettings } from './config.js'
 import type { QQChatDatabase } from './db.js'
+import type { QQChatLogger } from './logging.js'
 import type { MemoryEngine } from './memory.js'
 import type { QQApiClient } from './qq-api.js'
 import type { QQBindService } from './qq-auth.js'
 import { QQGateway } from './qq-gateway.js'
-import type { AccountRow, LoggerLike, QQChatConfig, QQNormalizedMessage } from './types.js'
+import type {
+  AccountRow,
+  ChatTargetRow,
+  ChatType,
+  GroupReceiveMode,
+  GroupRow,
+  MemberRow,
+  QQChatConfig,
+  QQChatDisplayEvent,
+  QQChatRuntimeSettings,
+  QQChatRuntimeSettingsPatch,
+  QQNormalizedMessage,
+  ReplyFormat,
+} from './types.js'
 
 export class QQChatRuntime {
   readonly gateways = new Map<number, QQGateway>()
@@ -19,13 +34,14 @@ export class QQChatRuntime {
     readonly memory: MemoryEngine,
     readonly bridge: DshQQBridge,
     readonly config: QQChatConfig,
-    readonly logger: LoggerLike = console,
+    readonly logger: QQChatLogger,
   ) {}
 
   async start(): Promise<void> {
     for (const account of this.db.enabledAccounts()) this.startGateway(account)
     this.outboxTimer = setInterval(() => void this.flushOutbox(), 3000)
     this.outboxTimer.unref?.()
+    this.logger.info?.('[dsh-qqchat] runtime started')
   }
 
   async stop(): Promise<void> {
@@ -36,6 +52,99 @@ export class QQChatRuntime {
     await this.bridge.dispose()
     this.memory.dispose()
     this.db.close()
+  }
+
+  settings(): QQChatRuntimeSettings {
+    return this.db.runtimeSettings(defaultRuntimeSettings(this.config))
+  }
+
+  updateSettings(patch: QQChatRuntimeSettingsPatch): QQChatRuntimeSettings {
+    if (patch.groupReceiveMode !== undefined) {
+      if (!isGroupReceiveMode(patch.groupReceiveMode)) throw new Error('无效的群聊接收模式')
+      this.db.setSetting('groupReceiveMode', patch.groupReceiveMode)
+    }
+    if (patch.replyFormat !== undefined) {
+      if (!isReplyFormat(patch.replyFormat)) throw new Error('无效的消息兼容格式')
+      this.db.setSetting('replyFormat', patch.replyFormat)
+    }
+    if (patch.groupMembersCanUseTools !== undefined) {
+      this.db.setSetting('groupMembersCanUseTools', Boolean(patch.groupMembersCanUseTools))
+    }
+    if (patch.ownerUserId !== undefined) {
+      this.db.setSetting('ownerUserId', String(patch.ownerUserId).trim())
+    }
+    const next = this.settings()
+    this.logger.info?.('[dsh-qqchat] settings updated', next)
+    return next
+  }
+
+  listChats(): ChatTargetRow[] {
+    const groups: ChatTargetRow[] = this.db.listGroups().map(row => ({
+      chatType: 'group',
+      rowId: Number(row.id),
+      accountId: Number(row.account_id),
+      platformId: row.platform_group_id,
+      displayName: row.name || `QQ群 ${shortId(row.platform_group_id)}`,
+      dshSessionId: row.dsh_session_id || null,
+      lastMessageAt: row.last_message_at ? Number(row.last_message_at) : null,
+      messageCount: Number(row.message_count || 0),
+    }))
+    const directs: ChatTargetRow[] = this.db.listDirectChats().map(row => ({
+      chatType: 'c2c',
+      rowId: Number(row.id),
+      accountId: Number(row.account_id),
+      platformId: row.platform_user_id,
+      displayName: row.display_name || `QQ 用户 ${shortId(row.platform_user_id)}`,
+      dshSessionId: row.dsh_session_id || null,
+      lastMessageAt: row.last_message_at ? Number(row.last_message_at) : null,
+      messageCount: Number(row.message_count || 0),
+    }))
+    return [...groups, ...directs].sort((a, b) => (b.lastMessageAt || 0) - (a.lastMessageAt || 0))
+  }
+
+  async ensureChatSession(chatType: ChatType, rowId: number): Promise<string> {
+    const row = this.chatRow(chatType, rowId)
+    if (!row) throw new Error(chatType === 'group' ? '群不存在' : '私聊用户不存在')
+    return this.bridge.ensureChatSession(chatType, row)
+  }
+
+  async sendActive(chatType: ChatType, rowId: number, content: string): Promise<string> {
+    const text = content.trim()
+    if (!text) throw new Error('消息不能为空')
+    const row = this.chatRow(chatType, rowId)
+    if (!row) throw new Error(chatType === 'group' ? '群不存在' : '私聊用户不存在')
+    const account = this.db.accountById(Number(row.account_id))
+    if (!account) throw new Error('QQ 账号不存在')
+    const targetId = chatType === 'group' ? (row as GroupRow).platform_group_id : (row as MemberRow).platform_user_id
+    await this.api.sendText(account, targetId, text, {
+      group: chatType === 'group',
+      messageId: null,
+      format: this.settings().replyFormat,
+    })
+    const messageDbId = this.db.insertMessage({
+      accountId: Number(account.id),
+      chatType,
+      groupId: chatType === 'group' ? Number(row.id) : undefined,
+      memberId: chatType === 'c2c' ? Number(row.id) : undefined,
+      direction: 'outbound',
+      content: text,
+    })
+    const sessionId = await this.bridge.recordTranscript({
+      messageId: `db:${messageDbId}`,
+      chatType,
+      chatId: targetId,
+      direction: 'outbound',
+      senderId: 'OWNER',
+      senderName: 'Owner',
+      content: text,
+      quotedText: '',
+      mentioned: false,
+      createdAt: Date.now(),
+    }, row, true)
+    if (chatType === 'group') this.memory.schedule(Number(row.id))
+    this.logger.info?.(`[dsh-qqchat] active ${chatType} message sent to ${shortId(targetId)}`)
+    if (!sessionId) throw new Error('未能建立 QQ Chat DSH session')
+    return sessionId
   }
 
   startGateway(account: AccountRow | undefined): void {
@@ -59,23 +168,21 @@ export class QQChatRuntime {
     const account = this.db.accountById(message.accountId)
     if (!account || !account.enabled) return
     const member = this.db.upsertMember(message.accountId, message.senderId, message.senderName)
-    let group = undefined
+    let group: GroupRow | undefined
     let shouldReply = true
-    let shouldRecord = true
     if (message.chatType === 'group') {
-      if (!this.config.groupChatEnabled || !message.groupOpenid) return
+      if (!message.groupOpenid) return
+      const mode = this.settings().groupReceiveMode
       group = this.db.upsertGroup(message.accountId, message.groupOpenid, {
         enabled: true,
-        requiresAt: this.config.groupRequiresAt,
-        readEnabled: this.config.groupReadEnabled,
+        requiresAt: mode === 'mention',
+        readEnabled: true,
       })
       this.db.touchGroupMember(Number(group.id), Number(member.id), message.senderName)
-      shouldReply = group.enabled === 1 && (message.mentioned || group.requires_at === 0)
-      shouldRecord = shouldReply || group.read_enabled === 1
-      if (!shouldRecord) return
+      shouldReply = mode === 'auto' || (mode === 'mention' && message.mentioned)
     }
 
-    this.db.insertMessage({
+    const messageDbId = this.db.insertMessage({
       accountId: message.accountId,
       platformMessageId: message.messageId,
       chatType: message.chatType,
@@ -87,6 +194,20 @@ export class QQChatRuntime {
       mentioned: message.mentioned,
       raw: message.raw,
     })
+    const row = message.chatType === 'group' ? group! : member
+    const displayEvent: QQChatDisplayEvent = {
+      messageId: `db:${messageDbId}`,
+      chatType: message.chatType,
+      chatId: message.chatType === 'group' ? message.groupOpenid! : message.senderId,
+      direction: 'inbound',
+      senderId: message.senderId,
+      senderName: message.senderName || 'QQ 用户',
+      content: message.text,
+      quotedText: message.quotedText,
+      mentioned: message.mentioned,
+      createdAt: Date.now(),
+    }
+    await this.bridge.recordTranscript(displayEvent, row, true)
     if (group) this.memory.schedule(Number(group.id))
     if (!shouldReply) return
 
@@ -99,13 +220,14 @@ export class QQChatRuntime {
         {
           group: message.chatType === 'group',
           messageId: message.messageId || null,
-          format: this.config.replyFormat,
+          format: this.settings().replyFormat,
         },
       )
       this.db.insertMessage({
         accountId: message.accountId,
         chatType: message.chatType,
         groupId: group?.id,
+        memberId: message.chatType === 'c2c' ? member.id : undefined,
         direction: 'outbound',
         content: reply,
         mentioned: false,
@@ -116,24 +238,8 @@ export class QQChatRuntime {
     }
   }
 
-  async sendActiveGroup(groupId: number, content: string): Promise<void> {
-    const group = this.db.groupById(Number(groupId))
-    if (!group) throw new Error('群不存在')
-    const account = this.db.accountById(Number(group.account_id))
-    if (!account) throw new Error('QQ 账号不存在')
-    await this.api.sendText(account, group.platform_group_id, content, {
-      group: true,
-      messageId: null,
-      format: this.config.replyFormat,
-    })
-    this.db.insertMessage({
-      accountId: Number(account.id),
-      chatType: 'group',
-      groupId: Number(group.id),
-      direction: 'outbound',
-      content,
-    })
-    this.memory.schedule(Number(group.id))
+  private chatRow(chatType: ChatType, rowId: number): GroupRow | MemberRow | undefined {
+    return chatType === 'group' ? this.db.groupById(Number(rowId)) : this.db.memberById(Number(rowId))
   }
 
   private async flushOutbox(): Promise<void> {
@@ -144,7 +250,7 @@ export class QQChatRuntime {
         await this.api.sendText(account, item.target_id, item.content, {
           group: item.chat_type === 'group',
           messageId: null,
-          format: this.config.replyFormat,
+          format: this.settings().replyFormat,
         })
         this.db.finishOutbox(Number(item.id))
       } catch (error) {
@@ -152,4 +258,16 @@ export class QQChatRuntime {
       }
     }
   }
+}
+
+function isGroupReceiveMode(value: unknown): value is GroupReceiveMode {
+  return value === 'auto' || value === 'mention' || value === 'silent'
+}
+
+function isReplyFormat(value: unknown): value is ReplyFormat {
+  return value === 'smart' || value === 'markdown' || value === 'compat'
+}
+
+function shortId(value: string): string {
+  return value.length > 10 ? `…${value.slice(-10)}` : value
 }

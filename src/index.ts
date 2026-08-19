@@ -5,6 +5,7 @@ import type {} from '@deepseek-ai/dsh-client-connection'
 import { DshQQBridge } from './agent-bridge.js'
 import { resolveConfig } from './config.js'
 import { QQChatDatabase } from './db.js'
+import { QQChatLogger } from './logging.js'
 import { MemoryEngine } from './memory.js'
 import { QQApiClient } from './qq-api.js'
 import { QQBindService } from './qq-auth.js'
@@ -13,13 +14,14 @@ import { QQChatRuntime } from './runtime.js'
 import type { LoggerLike, QQChatConfigInput } from './types.js'
 
 export const name = 'dsh-qqchat'
-export const inject = ['connection', 'agents', 'llm'] as const
+export const inject = ['connection', 'agents', 'llm', 'tools'] as const
 
 export function apply(ctx: Context, inputConfig: QQChatConfigInput = {}): void {
   const config = resolveConfig(inputConfig)
   mkdirSync(config.dataDir, { recursive: true, mode: 0o700 })
   const db = new QQChatDatabase(join(config.dataDir, 'qqchat.sqlite'))
-  const logger = (ctx as unknown as { logger?: LoggerLike }).logger || console
+  const baseLogger = (ctx as unknown as { logger?: LoggerLike }).logger || console
+  const logger = new QQChatLogger(baseLogger)
   const api = new QQApiClient(db, config)
   const auth = new QQBindService(db, config)
   const memory = new MemoryEngine(ctx, db, config, logger)

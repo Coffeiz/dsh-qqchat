@@ -1,27 +1,36 @@
-import type { Logger } from '@deepseek-ai/cordis'
-import type { LogEntry, LogLevel } from './types.js'
+import type { LogLevel, LoggerLike, PluginLogEntry } from './types.js'
 
-const MAX_ENTRIES = 500
+export class QQChatLogger implements LoggerLike {
+  private nextId = 1
+  private readonly entries: PluginLogEntry[] = []
 
-/** Small in-memory mirror of plugin logs for the Settings log viewer. */
-export class QQChatLogger {
-  private readonly entries: LogEntry[] = []
+  constructor(
+    private readonly base: LoggerLike = console,
+    private readonly maxEntries = 500,
+  ) {}
 
-  constructor(private readonly logger: Logger) {}
+  debug = (...args: unknown[]): void => this.write('debug', args)
+  info = (...args: unknown[]): void => this.write('info', args)
+  warn = (...args: unknown[]): void => this.write('warn', args)
+  error = (...args: unknown[]): void => this.write('error', args)
 
-  debug(message: string): void { this.write('debug', message) }
-  info(message: string): void { this.write('info', message) }
-  warn(message: string): void { this.write('warn', message) }
-  error(message: string): void { this.write('error', message) }
-
-  list(limit = 200): LogEntry[] {
-    return this.entries.slice(-Math.max(1, Math.min(limit, MAX_ENTRIES))).reverse()
+  list(limit = 200): PluginLogEntry[] {
+    const safe = Math.max(1, Math.min(this.maxEntries, Math.trunc(limit || 200)))
+    return this.entries.slice(-safe)
   }
 
-  private write(level: LogLevel, message: string): void {
-    const entry: LogEntry = { level, message, time: Date.now() }
-    this.entries.push(entry)
-    if (this.entries.length > MAX_ENTRIES) this.entries.splice(0, this.entries.length - MAX_ENTRIES)
-    this.logger[level](message)
+  private write(level: LogLevel, args: unknown[]): void {
+    const message = args.map(formatArg).join(' ')
+    this.entries.push({ id: this.nextId++, time: Date.now(), level, message })
+    if (this.entries.length > this.maxEntries) this.entries.splice(0, this.entries.length - this.maxEntries)
+    const sink = this.base[level] ?? this.base.info
+    if (sink) sink.call(this.base, ...args)
+    else (console[level] ?? console.log)(...args)
   }
+}
+
+function formatArg(value: unknown): string {
+  if (value instanceof Error) return value.stack || value.message
+  if (typeof value === 'string') return value
+  try { return JSON.stringify(value) } catch { return String(value) }
 }

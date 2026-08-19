@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
-import type { AgentHandle, AgentOptions, AgentSetup } from '@deepseek-ai/dsh-agent'
+import type { AgentHandle, AgentOptions, AgentSetup, PreStepDecision as AgentPreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import type { PreToolDecision } from '@deepseek-ai/dsh-tools'
+import type {} from '@deepseek-ai/dsh-tools'
 import './dsh-augmentations.js'
+import { defaultRuntimeSettings } from './config.js'
 import type { QQChatDatabase } from './db.js'
 import type { MemoryEngine } from './memory.js'
 import type {
@@ -12,8 +15,10 @@ import type {
   GroupRow,
   LoggerLike,
   MemberRow,
+  MessageRow,
   PendingReply,
   QQChatConfig,
+  QQChatDisplayEvent,
   QQNormalizedMessage,
 } from './types.js'
 
@@ -26,9 +31,19 @@ interface AgentPresetService {
   mount(ctx: Context, id: string): Promise<unknown>
 }
 
+interface SessionTitleService {
+  get(session: Session): unknown
+  rename(session: Session, title: string): unknown
+}
+
 interface Composition {
   presetId?: string
   setup?: AgentSetup
+}
+
+interface ActiveActor {
+  chatType: ChatType
+  senderId: string
 }
 
 export class DshQQBridge {
@@ -36,7 +51,10 @@ export class DshQQBridge {
   private readonly locks = new Map<string, Promise<unknown>>()
   private readonly pending = new Map<string, PendingReply>()
   private readonly routes = new Map<string, { provider: string; model: string }>()
+  private readonly activeActors = new Map<string, ActiveActor>()
   private readonly disposeEvent: () => void
+  private readonly disposeToolGate: () => void
+  private readonly disposeBootstrapGate: () => void
 
   constructor(
     private readonly ctx: Context,
@@ -46,14 +64,55 @@ export class DshQQBridge {
     private readonly logger: LoggerLike = console,
   ) {
     this.disposeEvent = ctx.on('session/event', (session, event) => this.onSessionEvent(session, event))
+    this.disposeBootstrapGate = ctx.on('agent/pre-step', async ({ messages }, next): Promise<AgentPreStepDecision> => {
+      if (messages.some(message => message.source.kind === 'qq-chat-bootstrap')) return { kind: 'reject' }
+      return next()
+    })
+    this.disposeToolGate = ctx.on('tools/pre-execute', async (exec, next): Promise<PreToolDecision> => {
+      const agent = exec.agent
+      if (!agent) return next()
+      const actor = this.activeActors.get(String(agent.id))
+      if (!actor || actor.chatType !== 'group') return next()
+      const settings = this.db.runtimeSettings(defaultRuntimeSettings(this.config))
+      if (settings.groupMembersCanUseTools) return next()
+      if (settings.ownerUserId && settings.ownerUserId === actor.senderId) return next()
+      return {
+        kind: 'deny',
+        reason: settings.ownerUserId
+          ? '当前 QQ 群只允许 Owner 使用工具。'
+          : '当前 QQ 群已关闭群成员工具权限，但尚未设置 Owner stable ID。',
+      }
+    })
   }
 
   async dispose(): Promise<void> {
     this.disposeEvent()
+    this.disposeBootstrapGate()
+    this.disposeToolGate()
     for (const handle of this.handles.values()) {
       try { await handle.dispose() } catch {}
     }
     this.handles.clear()
+    this.activeActors.clear()
+  }
+
+  /** Ensure a QQ peer has a DSH session so the Web workspace can open it. */
+  async ensureChatSession(chatType: ChatType, row: GroupRow | MemberRow): Promise<string> {
+    const { sessionId } = await this.ensureAgent(chatType, row)
+    return sessionId
+  }
+
+  /** Append one QQ transcript row without placing it on the model-visible surface. */
+  async recordTranscript(
+    event: QQChatDisplayEvent,
+    row: GroupRow | MemberRow,
+    createSession = false,
+  ): Promise<string | undefined> {
+    const existing = this.db.getChatSession(event.chatType, Number(row.id))
+    if (!existing && !createSession) return undefined
+    const { agent, sessionId } = await this.ensureAgent(event.chatType, row)
+    this.appendDisplayIfMissing(agent.session, event)
+    return sessionId
   }
 
   async reply(message: QQNormalizedMessage, group: GroupRow | undefined, member: MemberRow): Promise<string> {
@@ -85,12 +144,19 @@ export class DshQQBridge {
           senderName: message.senderName || undefined,
           messageId: message.messageId || '',
           mentioned: Boolean(message.mentioned),
+          form: 'notice',
+          summary: `QQ ${message.chatType === 'group' ? '群聊' : '私聊'}消息 · ${message.senderName || shortId(message.senderId)}`,
         },
         content: [{ type: 'text', text: this.memory.currentMessageText(message) }],
       })
       this.pending.set(String(sessionId), { text: '' })
-      agent.followup(current)
-      await agent.whenIdle()
+      this.activeActors.set(String(sessionId), { chatType: message.chatType, senderId: message.senderId })
+      try {
+        agent.followup(current)
+        await agent.whenIdle()
+      } finally {
+        this.activeActors.delete(String(sessionId))
+      }
       const pending = this.pending.get(String(sessionId))
       this.pending.delete(String(sessionId))
       const route = this.routes.get(String(sessionId)) || {
@@ -125,9 +191,21 @@ export class DshQQBridge {
     let sessionId = this.db.getChatSession(chatType, Number(row.id))
     if (sessionId) {
       const live = this.ctx.agents.get(SessionId(sessionId))
-      if (live) return { agent: live, sessionId }
+      if (live) {
+        this.ensureTitle(live.session, chatType, row)
+        this.ensureTranscriptSeed(live.session, chatType, row)
+        this.rememberGroupRoute(chatType, row, live, sessionId)
+        await this.ensureVisible(live)
+        return { agent: live, sessionId }
+      }
       const resumed = await this.tryResume(sessionId)
-      if (resumed) return { agent: resumed.agent, sessionId }
+      if (resumed) {
+        this.ensureTitle(resumed.agent.session, chatType, row)
+        this.ensureTranscriptSeed(resumed.agent.session, chatType, row)
+        this.rememberGroupRoute(chatType, row, resumed.agent, sessionId)
+        await this.ensureVisible(resumed.agent)
+        return { agent: resumed.agent, sessionId }
+      }
     }
     sessionId = `qqchat-${randomUUID()}`
     const composition = await this.composition()
@@ -139,7 +217,59 @@ export class DshQQBridge {
     })
     this.handles.set(sessionId, handle)
     this.db.setChatSession(chatType, Number(row.id), sessionId)
+    this.ensureTitle(handle.agent.session, chatType, row)
+    this.ensureTranscriptSeed(handle.agent.session, chatType, row)
+    this.rememberGroupRoute(chatType, row, handle.agent, sessionId)
+    await this.ensureVisible(handle.agent)
     return { agent: handle.agent, sessionId }
+  }
+
+  private rememberGroupRoute(
+    chatType: ChatType,
+    row: GroupRow | MemberRow,
+    agent: AgentHandle['agent'],
+    sessionId: string,
+  ): void {
+    if (chatType !== 'group') return
+    const provider = agent.options.provider || this.config.provider
+    const model = agent.options.model || this.config.model
+    if (provider && model) this.memory.setRoute(Number((row as GroupRow).id), provider, model, sessionId)
+  }
+
+  private async ensureVisible(agent: AgentHandle['agent']): Promise<void> {
+    if (agent.session.events.some(event => event.type === 'turn/start')) return
+    agent.followup(createUserMessage({
+      source: { kind: 'qq-chat-bootstrap', plugin: 'dsh-qqchat' },
+      content: [{ type: 'text', text: 'Activate QQ Chat workspace session.' }],
+    }))
+    await agent.whenIdle()
+  }
+
+  private ensureTranscriptSeed(session: Session, chatType: ChatType, row: GroupRow | MemberRow): void {
+    if (session.events.some(event => event.type === 'qqchat/message')) return
+    const rows = chatType === 'group'
+      ? this.db.listMessages(Number(row.id), 200)
+      : this.db.listDirectMessages(Number(row.id), 200)
+    for (const message of rows) this.appendDisplayIfMissing(session, displayEventFromRow(message, chatType, row))
+  }
+
+  private appendDisplayIfMissing(session: Session, event: QQChatDisplayEvent): void {
+    if (session.events.some(item => item.type === 'qqchat/message' && item.data.messageId === event.messageId)) return
+    session.append('qqchat/message', event)
+  }
+
+  private ensureTitle(session: Session, chatType: ChatType, row: GroupRow | MemberRow): void {
+    try {
+      const getService = (this.ctx as unknown as { get?: (name: string) => unknown }).get
+      const titles = getService?.call(this.ctx, 'sessionTitle') as SessionTitleService | undefined
+      if (!titles || titles.get(session)) return
+      const fallback = chatType === 'group'
+        ? `QQ群 · ${(row as GroupRow).name || shortId((row as GroupRow).platform_group_id)}`
+        : `QQ私聊 · ${(row as MemberRow).display_name || shortId((row as MemberRow).platform_user_id)}`
+      titles.rename(session, fallback)
+    } catch (error) {
+      this.logger.debug?.(`[dsh-qqchat] session title skipped: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   private async tryResume(sessionId: string): Promise<AgentHandle | undefined> {
@@ -187,11 +317,31 @@ export class DshQQBridge {
   }
 }
 
+function displayEventFromRow(row: MessageRow, chatType: ChatType, target: GroupRow | MemberRow): QQChatDisplayEvent {
+  const chatId = chatType === 'group' ? (target as GroupRow).platform_group_id : (target as MemberRow).platform_user_id
+  return {
+    messageId: `db:${row.id}`,
+    chatType,
+    chatId,
+    direction: row.direction,
+    senderId: row.direction === 'outbound' ? 'BOT' : row.platform_user_id || '',
+    senderName: row.direction === 'outbound' ? 'DSH Agent' : row.display_name || 'QQ 用户',
+    content: row.content,
+    quotedText: row.quoted_text || '',
+    mentioned: row.mentioned === 1,
+    createdAt: Number(row.created_at),
+  }
+}
+
 function extractText(content: readonly unknown[]): string {
   return content
     .filter((block): block is { type: 'text'; text: string } => isRecord(block) && block.type === 'text' && typeof block.text === 'string')
     .map(block => block.text)
     .join('\n')
+}
+
+function shortId(value: string): string {
+  return value.length > 10 ? `…${value.slice(-10)}` : value
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

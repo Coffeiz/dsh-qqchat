@@ -5,6 +5,7 @@ import type {
   AccountRow,
   AuthTaskRow,
   ChatType,
+  DirectChatListRow,
   GroupDefaults,
   GroupListRow,
   GroupMemberRow,
@@ -18,6 +19,7 @@ import type {
   MessageRow,
   OutboxRow,
   PublicAccountRow,
+  QQChatRuntimeSettings,
 } from './types.js'
 
 const now = (): number => Date.now()
@@ -113,6 +115,12 @@ export class QQChatDatabase {
         ON messages(account_id, platform_message_id, direction)
         WHERE platform_message_id IS NOT NULL AND platform_message_id <> '';
       CREATE INDEX IF NOT EXISTS messages_group_created ON messages(group_id, created_at, id);
+      CREATE INDEX IF NOT EXISTS messages_member_created ON messages(member_id, chat_type, created_at, id);
+      CREATE TABLE IF NOT EXISTS plugin_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS memory_documents (
         scope_type TEXT NOT NULL CHECK(scope_type IN ('group','member')),
         scope_key INTEGER NOT NULL,
@@ -200,6 +208,27 @@ export class QQChatDatabase {
     this.db.prepare('UPDATE accounts SET enabled=?,updated_at=? WHERE id=?').run(enabled ? 1 : 0, now(), id)
   }
 
+  getSetting<T>(key: string, fallback: T): T {
+    const row = one<{ value: string }>(this.db.prepare('SELECT value FROM plugin_settings WHERE key=?').get(key))
+    if (!row) return fallback
+    try { return JSON.parse(row.value) as T } catch { return fallback }
+  }
+
+  setSetting(key: string, value: unknown): void {
+    this.db.prepare(`INSERT INTO plugin_settings(key,value,updated_at) VALUES(?,?,?)
+      ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`)
+      .run(key, JSON.stringify(value), now())
+  }
+
+  runtimeSettings(defaults: QQChatRuntimeSettings): QQChatRuntimeSettings {
+    return {
+      groupReceiveMode: this.getSetting('groupReceiveMode', defaults.groupReceiveMode),
+      replyFormat: this.getSetting('replyFormat', defaults.replyFormat),
+      groupMembersCanUseTools: this.getSetting('groupMembersCanUseTools', defaults.groupMembersCanUseTools),
+      ownerUserId: this.getSetting('ownerUserId', defaults.ownerUserId),
+    }
+  }
+
   upsertGroup(accountId: number, platformGroupId: string, defaults: GroupDefaults = {}): GroupRow {
     const t = now()
     this.db.prepare(`INSERT INTO groups(account_id,platform_group_id,name,enabled,requires_at,read_enabled,created_at,updated_at)
@@ -240,6 +269,19 @@ export class QQChatDatabase {
       (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id=g.id) AS member_count,
       (SELECT COUNT(*) FROM messages m WHERE m.group_id=g.id) AS message_count
       FROM groups g ORDER BY COALESCE(last_message_at,g.updated_at) DESC`).all())
+  }
+
+  listDirectChats(): DirectChatListRow[] {
+    return many<DirectChatListRow>(this.db.prepare(`SELECT mem.*,
+      (SELECT MAX(created_at) FROM messages m WHERE m.member_id=mem.id AND m.chat_type='c2c') AS last_message_at,
+      (SELECT COUNT(*) FROM messages m WHERE m.member_id=mem.id AND m.chat_type='c2c') AS message_count
+      FROM members mem
+      WHERE EXISTS(SELECT 1 FROM messages m WHERE m.member_id=mem.id AND m.chat_type='c2c')
+      ORDER BY COALESCE(last_message_at,mem.last_seen_at) DESC`).all())
+  }
+
+  listKnownMembers(): MemberRow[] {
+    return many<MemberRow>(this.db.prepare('SELECT * FROM members ORDER BY last_seen_at DESC').all())
   }
 
   upsertMember(accountId: number, platformUserId: string, displayName = ''): MemberRow {
@@ -295,6 +337,21 @@ export class QQChatDatabase {
       FROM messages m LEFT JOIN members mem ON mem.id=m.member_id
       WHERE m.group_id=? ORDER BY m.id DESC LIMIT ?`).all(groupId, limit))
     return rows.reverse()
+  }
+
+  listDirectMessages(memberId: number, limit = 100): MessageRow[] {
+    const rows = many<MessageRow>(this.db.prepare(`SELECT m.*,mem.platform_user_id,mem.display_name
+      FROM messages m LEFT JOIN members mem ON mem.id=m.member_id
+      WHERE m.chat_type='c2c' AND m.member_id=? ORDER BY m.id DESC LIMIT ?`).all(memberId, limit))
+    return rows.reverse()
+  }
+
+  groupBySession(sessionId: string): GroupRow | undefined {
+    return one<GroupRow>(this.db.prepare('SELECT * FROM groups WHERE dsh_session_id=?').get(sessionId))
+  }
+
+  memberBySession(sessionId: string): MemberRow | undefined {
+    return one<MemberRow>(this.db.prepare('SELECT * FROM members WHERE dsh_session_id=?').get(sessionId))
   }
 
   recentGroupMessages(groupId: number, limit = 40): MessageRow[] { return this.listMessages(groupId, limit) }

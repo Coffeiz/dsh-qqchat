@@ -1,4 +1,6 @@
 import type {} from '@deepseek-ai/dsh-llm'
+import type {} from '@deepseek-ai/dsh-session'
+import type { QQChatDisplayEvent } from './types.js'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -11,7 +13,20 @@ declare module '@deepseek-ai/dsh-llm' {
       senderName?: string
       messageId: string
       mentioned: boolean
+      form: 'notice'
+      summary: string
     }
+    'qq-chat-bootstrap': {
+      kind: 'qq-chat-bootstrap'
+      plugin: 'dsh-qqchat'
+    }
+  }
+}
+
+declare module '@deepseek-ai/dsh-session/types' {
+  interface SessionEventMap {
+    /** QQ transcript row for the DSH Web conversation surface. Log-only; never enters model history. */
+    'qqchat/message': QQChatDisplayEvent
   }
 }
 

@@ -34,3 +34,42 @@ test('memory documents preserve separate group and member scopes', () => withDb(
   assert.equal(db.memoryDocs('group', Number(group.id)).summary, '群级摘要')
   assert.equal(db.memoryDocs('member', Number(member.id)).summary, '成员摘要')
 }))
+
+test('runtime settings persist independently from static config defaults', () => withDb(db => {
+  const defaults = {
+    groupReceiveMode: 'mention' as const,
+    replyFormat: 'smart' as const,
+    groupMembersCanUseTools: false,
+    ownerUserId: '',
+  }
+  assert.deepEqual(db.runtimeSettings(defaults), defaults)
+  db.setSetting('groupReceiveMode', 'silent')
+  db.setSetting('replyFormat', 'compat')
+  db.setSetting('groupMembersCanUseTools', true)
+  db.setSetting('ownerUserId', 'owner-openid')
+  assert.deepEqual(db.runtimeSettings(defaults), {
+    groupReceiveMode: 'silent',
+    replyFormat: 'compat',
+    groupMembersCanUseTools: true,
+    ownerUserId: 'owner-openid',
+  })
+}))
+
+test('direct chats are listed from c2c history and keep their DSH session mapping', () => withDb(db => {
+  const account = db.upsertAccount('app-direct', 'secret-direct')
+  const member = db.upsertMember(Number(account.id), 'direct-user', 'Carol')
+  db.insertMessage({
+    accountId: Number(account.id),
+    platformMessageId: 'direct-msg-1',
+    chatType: 'c2c',
+    memberId: Number(member.id),
+    direction: 'inbound',
+    content: 'hello',
+  })
+  db.setChatSession('c2c', Number(member.id), 'qqchat-direct-session')
+  const [chat] = db.listDirectChats()
+  assert.equal(chat?.platform_user_id, 'direct-user')
+  assert.equal(chat?.message_count, 1)
+  assert.equal(chat?.dsh_session_id, 'qqchat-direct-session')
+  assert.equal(db.listDirectMessages(Number(member.id))[0]?.content, 'hello')
+}))

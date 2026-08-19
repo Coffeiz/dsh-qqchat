@@ -40,6 +40,7 @@ export class MemoryEngine {
 
   schedule(groupId: number): void {
     groupId = Number(groupId)
+    if (!this.routes.has(groupId)) return
     const existing = this.timers.get(groupId)
     if (existing) clearTimeout(existing)
     if (this.db.unreflectedCount(groupId) >= this.config.reflectionBatchSize) {
