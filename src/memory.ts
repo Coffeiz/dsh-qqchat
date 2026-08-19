@@ -6,9 +6,11 @@ import type {
   GroupMemberRow,
   GroupRow,
   LoggerLike,
+  MemberRow,
   MemoryDocType,
   MemoryDocuments,
   MemoryView,
+  MessageRow,
   ModelRoute,
   QQChatConfig,
   ReflectionPayload,
@@ -16,9 +18,17 @@ import type {
 
 const DOCS = ['profile', 'summary', 'daily', 'memory', 'pattern'] as const satisfies readonly MemoryDocType[]
 
+interface MemberReflectionPayload {
+  profile?: unknown
+  pattern?: unknown
+  summary?: unknown
+}
+
 export class MemoryEngine {
   private readonly timers = new Map<number, ReturnType<typeof setTimeout>>()
+  private readonly memberTimers = new Map<number, ReturnType<typeof setTimeout>>()
   private readonly routes = new Map<number, ModelRoute>()
+  private readonly memberRoutes = new Map<number, ModelRoute>()
 
   constructor(
     private readonly ctx: Context,
@@ -29,12 +39,19 @@ export class MemoryEngine {
 
   dispose(): void {
     for (const timer of this.timers.values()) clearTimeout(timer)
+    for (const timer of this.memberTimers.values()) clearTimeout(timer)
     this.timers.clear()
+    this.memberTimers.clear()
   }
 
   setRoute(groupId: number, provider: string, model: string, sessionId: string): void {
     if (!provider || !model) return
     this.routes.set(Number(groupId), { provider, model, sessionId })
+  }
+
+  setMemberRoute(memberId: number, provider: string, model: string, sessionId: string): void {
+    if (!provider || !model) return
+    this.memberRoutes.set(Number(memberId), { provider, model, sessionId })
   }
 
   schedule(groupId: number): void {
@@ -52,6 +69,23 @@ export class MemoryEngine {
     }, this.config.reflectionIdleMs)
     timer.unref?.()
     this.timers.set(groupId, timer)
+  }
+
+  scheduleMember(memberId: number): void {
+    memberId = Number(memberId)
+    if (!this.memberRoutes.has(memberId)) return
+    const existing = this.memberTimers.get(memberId)
+    if (existing) clearTimeout(existing)
+    if (this.unreflectedDirectMessages(memberId, this.config.reflectionBatchSize).length >= this.config.reflectionBatchSize) {
+      void this.reflectMemberNow(memberId).catch(error => this.logger.warn?.(`[dsh-qqchat] member memory reflection: ${errorMessage(error)}`))
+      return
+    }
+    const timer = setTimeout(() => {
+      this.memberTimers.delete(memberId)
+      void this.reflectMemberNow(memberId).catch(error => this.logger.warn?.(`[dsh-qqchat] member memory reflection: ${errorMessage(error)}`))
+    }, this.config.reflectionIdleMs)
+    timer.unref?.()
+    this.memberTimers.set(memberId, timer)
   }
 
   async reflectNow(groupId: number): Promise<MemoryView> {
@@ -87,7 +121,50 @@ export class MemoryEngine {
       existing: { group: pickDocs(currentGroup), members: memberMemory },
       messages: transcript,
     }
-    const system = memorySystemPrompt()
+    const reflected = await this.generateReflection(route, memorySystemPrompt(), input, `qqchat-memory-${groupId}`) as ReflectionPayload
+    this.applyReflection(groupId, members, reflected)
+    const lastMessage = messages.at(-1)
+    if (lastMessage) this.db.markReflected(groupId, Number(lastMessage.id))
+    const view = this.memoryView(groupId)
+    if (!view) throw new Error('群不存在')
+    return view
+  }
+
+  async reflectMemberNow(memberId: number): Promise<MemoryDocuments> {
+    memberId = Number(memberId)
+    const route = this.memberRoutes.get(memberId)
+    if (!route) throw new Error('这个私聊还没有可复用的 DSH 模型路由；先让 Agent 完成一次回复')
+    const member = this.db.memberById(memberId)
+    if (!member) throw new Error('成员不存在')
+    const messages = this.unreflectedDirectMessages(memberId, this.config.reflectionMaxMessages)
+    if (messages.length === 0) return this.db.memoryDocs('member', memberId)
+
+    const input = {
+      member: {
+        senderId: member.platform_user_id,
+        displayName: member.display_name || '',
+      },
+      existing: pickMemberDocs(this.db.memoryDocs('member', memberId)),
+      messages: messages.map(message => ({
+        id: Number(message.id),
+        at: message.created_at,
+        direction: message.direction,
+        senderId: message.direction === 'outbound' ? 'BOT' : member.platform_user_id,
+        senderName: message.direction === 'outbound' ? 'DSH Agent' : (member.display_name || ''),
+        text: message.content,
+        quotedText: message.quoted_text || '',
+      })),
+    }
+    const reflected = await this.generateReflection(route, memberMemorySystemPrompt(), input, `qqchat-member-memory-${memberId}`) as MemberReflectionPayload
+    if (reflected.profile !== undefined) this.db.setMemoryDoc('member', memberId, 'profile', stringifyDoc(reflected.profile))
+    if (reflected.pattern !== undefined) this.db.setMemoryDoc('member', memberId, 'pattern', stringifyDoc(reflected.pattern))
+    if (reflected.summary !== undefined) this.db.setMemoryDoc('member', memberId, 'summary', stringifyDoc(reflected.summary))
+    const lastMessage = messages.at(-1)
+    if (lastMessage) this.db.setSetting(memberCursorKey(memberId), Number(lastMessage.id))
+    return this.db.memoryDocs('member', memberId)
+  }
+
+  private async generateReflection(route: ModelRoute, system: string, input: unknown, fallbackSessionId: string): Promise<unknown> {
     const request = createUserMessage({
       source: { kind: 'plugin', plugin: 'dsh-qqchat' },
       content: [{ type: 'text', text: JSON.stringify(input) }],
@@ -99,19 +176,21 @@ export class MemoryEngine {
       messages: [request],
       system,
       maxTokens: this.config.memoryMaxTokens,
-      sessionId: SessionId(route.sessionId || `qqchat-memory-${groupId}`),
+      sessionId: SessionId(route.sessionId || fallbackSessionId),
     })) assembler.push(chunk)
     const text = assembler.blocks()
       .filter(block => block.type === 'text')
       .map(block => block.text)
       .join('\n')
-    const reflected = parseJsonObject(text)
-    this.applyReflection(groupId, members, reflected)
-    const lastMessage = messages.at(-1)
-    if (lastMessage) this.db.markReflected(groupId, Number(lastMessage.id))
-    const view = this.memoryView(groupId)
-    if (!view) throw new Error('群不存在')
-    return view
+    return parseJsonObject(text)
+  }
+
+  private unreflectedDirectMessages(memberId: number, limit: number): MessageRow[] {
+    const cursor = this.db.getSetting<number>(memberCursorKey(memberId), 0)
+    const fetchLimit = Math.max(limit, this.config.reflectionMaxMessages)
+    return this.db.listDirectMessages(memberId, fetchLimit)
+      .filter(message => Number(message.id) > cursor)
+      .slice(-limit)
   }
 
   private applyReflection(groupId: number, members: GroupMemberRow[], reflected: ReflectionPayload): void {
@@ -203,12 +282,22 @@ function memorySystemPrompt(): string {
 没有变化的成员可省略；不要为 BOT 创建成员记忆。`
 }
 
-function parseJsonObject(text: string): ReflectionPayload {
+function memberMemorySystemPrompt(): string {
+  return `你负责整理一个 QQ 私聊成员的长期记忆。senderId 是唯一可靠身份，displayName 只用于展示。规则：
+1. 只记录这个成员稳定且未来有用的信息，不根据昵称猜身份。
+2. profile 写较稳定的个人事实；pattern 写多次出现的偏好、习惯或行为模式；summary 写当前值得保留的紧凑状态。
+3. 一次性寒暄、玩笑、短暂情绪和未经确认的推断不要写入长期记忆。
+4. existing 是已有记忆，应在其基础上克制更新。
+5. 输出严格 JSON，不要 Markdown 代码块、解释或额外文字。
+输出结构：{"profile":{},"pattern":{},"summary":""}`
+}
+
+function parseJsonObject(text: string): ReflectionPayload | MemberReflectionPayload {
   const trimmed = String(text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
-  try { return JSON.parse(trimmed) as ReflectionPayload } catch {}
+  try { return JSON.parse(trimmed) as ReflectionPayload | MemberReflectionPayload } catch {}
   const start = trimmed.indexOf('{')
   const end = trimmed.lastIndexOf('}')
-  if (start >= 0 && end > start) return JSON.parse(trimmed.slice(start, end + 1)) as ReflectionPayload
+  if (start >= 0 && end > start) return JSON.parse(trimmed.slice(start, end + 1)) as ReflectionPayload | MemberReflectionPayload
   throw new Error('记忆反思模型没有返回有效 JSON')
 }
 
@@ -226,6 +315,18 @@ function stringifyMemory(value: unknown): string {
 
 function pickDocs(docs: MemoryDocuments): MemoryDocuments {
   return Object.fromEntries(DOCS.filter(key => docs[key]).map(key => [key, docs[key]])) as MemoryDocuments
+}
+
+function pickMemberDocs(docs: MemoryDocuments): MemoryDocuments {
+  return {
+    ...(docs.profile ? { profile: docs.profile } : {}),
+    ...(docs.pattern ? { pattern: docs.pattern } : {}),
+    ...(docs.summary ? { summary: docs.summary } : {}),
+  }
+}
+
+function memberCursorKey(memberId: number): string {
+  return `memberReflection:${memberId}`
 }
 
 function section(title: string, content: string | undefined): string {
