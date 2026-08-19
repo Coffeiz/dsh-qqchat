@@ -149,6 +149,7 @@ export class QQChatRuntime {
 
     if (!shouldReply) {
       await this.bridge.recordTranscript(displayEvent, row, true)
+      if (group) this.memory.schedule(Number(group.id))
       return
     }
 
