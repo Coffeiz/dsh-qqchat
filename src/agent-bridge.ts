@@ -15,7 +15,6 @@ import type {
   GroupRow,
   LoggerLike,
   MemberRow,
-  MessageRow,
   PendingReply,
   QQChatConfig,
   QQChatDisplayEvent,
@@ -96,7 +95,7 @@ export class DshQQBridge {
     this.activeActors.clear()
   }
 
-  /** Ensure a QQ peer has a DSH session so the Web workspace can open it. */
+  /** Ensure a QQ peer has a real DSH Session. */
   async ensureChatSession(chatType: ChatType, row: GroupRow | MemberRow): Promise<string> {
     const { sessionId } = await this.ensureAgent(chatType, row)
     return sessionId
@@ -122,6 +121,7 @@ export class DshQQBridge {
       const row = message.chatType === 'group' ? group! : member
       const { agent, sessionId } = await this.ensureAgent(message.chatType, row)
       await agent.whenIdle()
+
       const contextText = message.chatType === 'group'
         ? this.memory.contextForGroup(group!, member)
         : this.memory.contextForMember(member)
@@ -134,6 +134,7 @@ export class DshQQBridge {
         },
         content: [{ type: 'text', text: contextText }],
       }))
+
       const current = createUserMessage({
         source: {
           kind: 'user',
@@ -148,6 +149,7 @@ export class DshQQBridge {
         },
         content: [{ type: 'text', text: visiblePromptText(message) }],
       })
+
       this.pending.set(String(sessionId), { text: '' })
       this.activeActors.set(String(sessionId), { chatType: message.chatType, senderId: message.senderId })
       try {
@@ -156,6 +158,7 @@ export class DshQQBridge {
       } finally {
         this.activeActors.delete(String(sessionId))
       }
+
       const pending = this.pending.get(String(sessionId))
       this.pending.delete(String(sessionId))
       const route = this.routes.get(String(sessionId)) || {
@@ -192,7 +195,6 @@ export class DshQQBridge {
       const live = this.ctx.agents.get(SessionId(sessionId))
       if (live) {
         this.ensureTitle(live.session, chatType, row)
-        this.ensureTranscriptSeed(live.session, chatType, row)
         this.rememberGroupRoute(chatType, row, live, sessionId)
         await this.ensureVisible(live)
         return { agent: live, sessionId }
@@ -200,12 +202,12 @@ export class DshQQBridge {
       const resumed = await this.tryResume(sessionId)
       if (resumed) {
         this.ensureTitle(resumed.agent.session, chatType, row)
-        this.ensureTranscriptSeed(resumed.agent.session, chatType, row)
         this.rememberGroupRoute(chatType, row, resumed.agent, sessionId)
         await this.ensureVisible(resumed.agent)
         return { agent: resumed.agent, sessionId }
       }
     }
+
     sessionId = `qqchat-${randomUUID()}`
     const composition = await this.composition()
     const handle = await this.ctx.agents.create({
@@ -217,7 +219,6 @@ export class DshQQBridge {
     this.handles.set(sessionId, handle)
     this.db.setChatSession(chatType, Number(row.id), sessionId)
     this.ensureTitle(handle.agent.session, chatType, row)
-    this.ensureTranscriptSeed(handle.agent.session, chatType, row)
     this.rememberGroupRoute(chatType, row, handle.agent, sessionId)
     await this.ensureVisible(handle.agent)
     return { agent: handle.agent, sessionId }
@@ -235,6 +236,11 @@ export class DshQQBridge {
     if (provider && model) this.memory.setRoute(Number((row as GroupRow).id), provider, model, sessionId)
   }
 
+  /**
+   * DSH hides sessions that have never opened a turn. A rejected bootstrap
+   * opens one durable turn boundary without entering a model step or calling
+   * the LLM, so silent-only QQ chats still live in the normal Session list.
+   */
   private async ensureVisible(agent: AgentHandle['agent']): Promise<void> {
     if (agent.session.events.some(event => event.type === 'turn/start')) return
     agent.followup(createUserMessage({
@@ -242,14 +248,6 @@ export class DshQQBridge {
       content: [{ type: 'text', text: 'Activate QQ Chat workspace session.' }],
     }))
     await agent.whenIdle()
-  }
-
-  private ensureTranscriptSeed(session: Session, chatType: ChatType, row: GroupRow | MemberRow): void {
-    if (session.events.some(event => event.type === 'qqchat/message')) return
-    const rows = chatType === 'group'
-      ? this.db.listMessages(Number(row.id), 200)
-      : this.db.listDirectMessages(Number(row.id), 200)
-    for (const message of rows) this.appendDisplayIfMissing(session, displayEventFromRow(message, chatType, row))
   }
 
   private appendDisplayIfMissing(session: Session, event: QQChatDisplayEvent): void {
@@ -313,22 +311,6 @@ export class DshQQBridge {
     return current.finally(() => {
       if (this.locks.get(key) === current) this.locks.delete(key)
     })
-  }
-}
-
-function displayEventFromRow(row: MessageRow, chatType: ChatType, target: GroupRow | MemberRow): QQChatDisplayEvent {
-  const chatId = chatType === 'group' ? (target as GroupRow).platform_group_id : (target as MemberRow).platform_user_id
-  return {
-    messageId: `db:${row.id}`,
-    chatType,
-    chatId,
-    direction: row.direction,
-    senderId: row.direction === 'outbound' ? 'BOT' : row.platform_user_id || '',
-    senderName: row.direction === 'outbound' ? 'DSH Agent' : row.display_name || 'QQ 用户',
-    content: row.content,
-    quotedText: row.quoted_text || '',
-    mentioned: row.mentioned === 1,
-    createdAt: Number(row.created_at),
   }
 }
 
