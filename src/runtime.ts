@@ -207,9 +207,15 @@ export class QQChatRuntime {
       mentioned: message.mentioned,
       createdAt: Date.now(),
     }
-    await this.bridge.recordTranscript(displayEvent, row, true)
     if (group) this.memory.schedule(Number(group.id))
-    if (!shouldReply) return
+
+    // Messages that do not wake the Agent remain log-only transcript events.
+    // Agent-triggering messages are represented by DSH's native user/message
+    // event in bridge.reply(), avoiding a duplicate QQ bubble + user/context row.
+    if (!shouldReply) {
+      await this.bridge.recordTranscript(displayEvent, row, true)
+      return
+    }
 
     try {
       const reply = await this.bridge.reply(message, group, member)
