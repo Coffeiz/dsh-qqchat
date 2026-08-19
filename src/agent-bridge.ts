@@ -21,29 +21,11 @@ import type {
   QQNormalizedMessage,
 } from './types.js'
 
-interface AgentPreset {
-  id: string
-}
-
-interface AgentPresetService {
-  resolve(id?: string): Promise<AgentPreset>
-  mount(ctx: Context, id: string): Promise<unknown>
-}
-
-interface SessionTitleService {
-  get(session: Session): unknown
-  rename(session: Session, title: string): unknown
-}
-
-interface Composition {
-  presetId?: string
-  setup?: AgentSetup
-}
-
-interface ActiveActor {
-  chatType: ChatType
-  senderId: string
-}
+interface AgentPreset { id: string }
+interface AgentPresetService { resolve(id?: string): Promise<AgentPreset>; mount(ctx: Context, id: string): Promise<unknown> }
+interface SessionTitleService { get(session: Session): unknown; rename(session: Session, title: string): unknown }
+interface Composition { presetId?: string; setup?: AgentSetup }
+interface ActiveActor { chatType: ChatType; senderId: string }
 
 export class DshQQBridge {
   private readonly handles = new Map<string, AgentHandle>()
@@ -95,18 +77,12 @@ export class DshQQBridge {
     this.activeActors.clear()
   }
 
-  /** Ensure a QQ peer has a real DSH Session. */
   async ensureChatSession(chatType: ChatType, row: GroupRow | MemberRow): Promise<string> {
     const { sessionId } = await this.ensureAgent(chatType, row)
     return sessionId
   }
 
-  /** Append one QQ transcript row without placing it on the model-visible surface. */
-  async recordTranscript(
-    event: QQChatDisplayEvent,
-    row: GroupRow | MemberRow,
-    createSession = false,
-  ): Promise<string | undefined> {
+  async recordTranscript(event: QQChatDisplayEvent, row: GroupRow | MemberRow, createSession = false): Promise<string | undefined> {
     const existing = this.db.getChatSession(event.chatType, Number(row.id))
     if (!existing && !createSession) return undefined
     const { agent, sessionId } = await this.ensureAgent(event.chatType, row)
@@ -126,26 +102,15 @@ export class DshQQBridge {
         ? this.memory.contextForGroup(group!, member, message.messageId || undefined)
         : this.memory.contextForMember(member)
       agent.inject(createUserMessage({
-        source: {
-          kind: 'plugin',
-          plugin: 'dsh-qqchat',
-          form: 'snapshot',
-          sections: [{ name: 'qq-chat-context', text: contextText }],
-        },
+        source: { kind: 'plugin', plugin: 'dsh-qqchat', form: 'snapshot', sections: [{ name: 'qq-chat-context', text: contextText }] },
         content: [{ type: 'text', text: contextText }],
       }))
 
       const current = createUserMessage({
         source: {
-          kind: 'user',
-          channel: 'qq',
-          botId: String(message.accountId),
-          chatType: message.chatType,
-          chatId: message.chatId,
-          senderId: message.senderId,
-          senderName: message.senderName || undefined,
-          messageId: message.messageId || '',
-          mentioned: Boolean(message.mentioned),
+          kind: 'user', channel: 'qq', botId: String(message.accountId), chatType: message.chatType,
+          chatId: message.chatId, senderId: message.senderId, senderName: message.senderName || undefined,
+          messageId: message.messageId || '', mentioned: Boolean(message.mentioned),
         },
         content: [{ type: 'text', text: visiblePromptText(message) }],
       })
@@ -161,12 +126,11 @@ export class DshQQBridge {
 
       const pending = this.pending.get(String(sessionId))
       this.pending.delete(String(sessionId))
-      const route = this.routes.get(String(sessionId)) || {
-        provider: agent.options.provider,
-        model: agent.options.model,
-      }
+      const route = this.routes.get(String(sessionId)) || { provider: agent.options.provider, model: agent.options.model }
       if (message.chatType === 'group' && route.provider && route.model) {
         this.memory.setRoute(Number(group!.id), route.provider, route.model, String(sessionId))
+      } else if (message.chatType === 'c2c' && route.provider && route.model) {
+        this.memory.setMemberRoute(Number(member.id), route.provider, route.model, String(sessionId))
       }
       const text = pending?.text.trim()
       if (!text) throw new Error('DSH Agent 本轮没有产生可发送的文本回复')
@@ -195,14 +159,14 @@ export class DshQQBridge {
       const live = this.ctx.agents.get(SessionId(sessionId))
       if (live) {
         this.ensureTitle(live.session, chatType, row)
-        this.rememberGroupRoute(chatType, row, live, sessionId)
+        this.rememberRoute(chatType, row, live, sessionId)
         await this.ensureVisible(live)
         return { agent: live, sessionId }
       }
       const resumed = await this.tryResume(sessionId)
       if (resumed) {
         this.ensureTitle(resumed.agent.session, chatType, row)
-        this.rememberGroupRoute(chatType, row, resumed.agent, sessionId)
+        this.rememberRoute(chatType, row, resumed.agent, sessionId)
         await this.ensureVisible(resumed.agent)
         return { agent: resumed.agent, sessionId }
       }
@@ -211,42 +175,28 @@ export class DshQQBridge {
     sessionId = `qqchat-${randomUUID()}`
     const composition = await this.composition()
     const handle = await this.ctx.agents.create({
-      sessionId: SessionId(sessionId),
-      meta: composition.presetId ? { agentPreset: composition.presetId } : undefined,
-      agentOptions: this.agentOptions(),
-      setup: composition.setup,
+      sessionId: SessionId(sessionId), meta: composition.presetId ? { agentPreset: composition.presetId } : undefined,
+      agentOptions: this.agentOptions(), setup: composition.setup,
     })
     this.handles.set(sessionId, handle)
     this.db.setChatSession(chatType, Number(row.id), sessionId)
     this.ensureTitle(handle.agent.session, chatType, row)
-    this.rememberGroupRoute(chatType, row, handle.agent, sessionId)
+    this.rememberRoute(chatType, row, handle.agent, sessionId)
     await this.ensureVisible(handle.agent)
     return { agent: handle.agent, sessionId }
   }
 
-  private rememberGroupRoute(
-    chatType: ChatType,
-    row: GroupRow | MemberRow,
-    agent: AgentHandle['agent'],
-    sessionId: string,
-  ): void {
-    if (chatType !== 'group') return
+  private rememberRoute(chatType: ChatType, row: GroupRow | MemberRow, agent: AgentHandle['agent'], sessionId: string): void {
     const provider = agent.options.provider || this.config.provider
     const model = agent.options.model || this.config.model
-    if (provider && model) this.memory.setRoute(Number((row as GroupRow).id), provider, model, sessionId)
+    if (!provider || !model) return
+    if (chatType === 'group') this.memory.setRoute(Number((row as GroupRow).id), provider, model, sessionId)
+    else this.memory.setMemberRoute(Number((row as MemberRow).id), provider, model, sessionId)
   }
 
-  /**
-   * DSH hides sessions that have never opened a turn. A rejected bootstrap
-   * opens one durable turn boundary without entering a model step or calling
-   * the LLM, so silent-only QQ chats still live in the normal Session list.
-   */
   private async ensureVisible(agent: AgentHandle['agent']): Promise<void> {
     if (agent.session.events.some(event => event.type === 'turn/start')) return
-    agent.followup(createUserMessage({
-      source: { kind: 'qq-chat-bootstrap', plugin: 'dsh-qqchat' },
-      content: [{ type: 'text', text: 'Activate QQ Chat workspace session.' }],
-    }))
+    agent.followup(createUserMessage({ source: { kind: 'qq-chat-bootstrap', plugin: 'dsh-qqchat' }, content: [{ type: 'text', text: 'Activate QQ Chat workspace session.' }] }))
     await agent.whenIdle()
   }
 
@@ -272,11 +222,7 @@ export class DshQQBridge {
   private async tryResume(sessionId: string): Promise<AgentHandle | undefined> {
     try {
       const composition = await this.composition()
-      const handle = await this.ctx.agents.resume({
-        resumeSessionId: SessionId(sessionId),
-        agentOptions: this.agentOptions(),
-        setup: composition.setup,
-      })
+      const handle = await this.ctx.agents.resume({ resumeSessionId: SessionId(sessionId), agentOptions: this.agentOptions(), setup: composition.setup })
       this.handles.set(sessionId, handle)
       return handle
     } catch (error) {
@@ -298,42 +244,27 @@ export class DshQQBridge {
     const presets = getService?.call(this.ctx, 'agentPresets') as AgentPresetService | undefined
     if (!presets) return {}
     const preset = await presets.resolve(this.config.agentPreset)
-    return {
-      presetId: preset.id,
-      setup: async agentCtx => { await presets.mount(agentCtx, preset.id) },
-    }
+    return { presetId: preset.id, setup: async agentCtx => { await presets.mount(agentCtx, preset.id) } }
   }
 
   private serial<T>(key: string, task: () => Promise<T>): Promise<T> {
     const previous = this.locks.get(key) || Promise.resolve()
     const current = previous.catch(() => undefined).then(task)
     this.locks.set(key, current)
-    return current.finally(() => {
-      if (this.locks.get(key) === current) this.locks.delete(key)
-    })
+    return current.finally(() => { if (this.locks.get(key) === current) this.locks.delete(key) })
   }
 }
 
 function visiblePromptText(message: QQNormalizedMessage): string {
-  const body = message.quotedText
-    ? `> ${message.quotedText}\n\n${message.text || '(空消息)'}`
-    : message.text || '(空消息)'
+  const body = message.quotedText ? `> ${message.quotedText}\n\n${message.text || '(空消息)'}` : message.text || '(空消息)'
   if (message.chatType !== 'group') return body
   const speaker = message.senderName || shortId(message.senderId)
-  return `${speaker}\n${body}`
+  return `${speaker} · ${shortId(message.senderId)}\n${body}`
 }
 
 function extractText(content: readonly unknown[]): string {
-  return content
-    .filter((block): block is { type: 'text'; text: string } => isRecord(block) && block.type === 'text' && typeof block.text === 'string')
-    .map(block => block.text)
-    .join('\n')
+  return content.filter((block): block is { type: 'text'; text: string } => isRecord(block) && block.type === 'text' && typeof block.text === 'string').map(block => block.text).join('\n')
 }
 
-function shortId(value: string): string {
-  return value.length > 10 ? `…${value.slice(-10)}` : value
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
+function shortId(value: string): string { return value.length > 10 ? `…${value.slice(-10)}` : value }
+function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null }
