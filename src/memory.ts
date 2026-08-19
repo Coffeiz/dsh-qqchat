@@ -11,7 +11,6 @@ import type {
   MemoryView,
   ModelRoute,
   QQChatConfig,
-  QQNormalizedMessage,
   ReflectionPayload,
 } from './types.js'
 
@@ -135,8 +134,13 @@ export class MemoryEngine {
     }
   }
 
-  contextForGroup(group: GroupRow, currentMember?: { id: number; platform_user_id: string; display_name: string | null }): string {
+  contextForGroup(
+    group: GroupRow,
+    currentMember?: { id: number; platform_user_id: string; display_name: string | null },
+    currentPlatformMessageId?: string,
+  ): string {
     const history = this.db.recentGroupMessages(Number(group.id), this.config.recentGroupMessages)
+      .filter(message => !currentPlatformMessageId || message.platform_message_id !== currentPlatformMessageId)
     const groupDocs = this.db.memoryDocs('group', Number(group.id))
     const memberDocs = currentMember ? this.db.memoryDocs('member', Number(currentMember.id)) : {}
     const lines = history.map(message => {
@@ -157,7 +161,7 @@ export class MemoryEngine {
       section('当前成员画像', memberDocs.profile),
       section('当前成员模式', memberDocs.pattern),
       section('当前成员摘要', memberDocs.summary),
-      '[最近群聊记录；每行身份元数据可靠]',
+      '[最近群聊记录；每行身份元数据可靠；不包含当前待回复消息]',
       ...lines,
     ].filter(Boolean).join('\n')
   }
@@ -172,19 +176,6 @@ export class MemoryEngine {
       section('成员画像', docs.profile),
       section('行为模式', docs.pattern),
       section('成员摘要', docs.summary),
-    ].filter(Boolean).join('\n')
-  }
-
-  currentMessageText(message: QQNormalizedMessage): string {
-    return [
-      message.chatType === 'group' ? '[当前 QQ 群消息；以下身份字段是可靠元数据]' : '[当前 QQ 私聊消息；以下身份字段是可靠元数据]',
-      `发言人ID=${message.senderId}`,
-      `显示名=${message.senderName || ''}`,
-      message.chatType === 'group' ? `群ID=${message.groupOpenid || ''}` : '',
-      `是否@机器人=${message.mentioned ? '是' : '否'}`,
-      message.quotedText ? `引用=${message.quotedText}` : '',
-      '正文：',
-      message.text || '(空消息)',
     ].filter(Boolean).join('\n')
   }
 
