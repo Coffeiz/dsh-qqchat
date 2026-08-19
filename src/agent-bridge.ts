@@ -123,7 +123,7 @@ export class DshQQBridge {
       await agent.whenIdle()
 
       const contextText = message.chatType === 'group'
-        ? this.memory.contextForGroup(group!, member)
+        ? this.memory.contextForGroup(group!, member, message.messageId || undefined)
         : this.memory.contextForMember(member)
       agent.inject(createUserMessage({
         source: {
