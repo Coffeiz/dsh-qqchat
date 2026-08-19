@@ -1,15 +1,14 @@
 import { installStyles } from './shared.cjs'
 import type { Ctx } from './shared.cjs'
 import { QQSettings } from './settings.cjs'
-import { QQComposer, QQSessionUtility, QQSidebarAction, QQTranscriptNode, createQQMessageDefinition } from './workspace.cjs'
+import { QQComposer, QQSessionUtility, QQTranscriptNode, createQQMessageDefinition } from './workspace.cjs'
 
-exports.inject = ['slots', 'connection', 'sessions', 'conversationEvents'] as const
+exports.inject = ['slots', 'connection', 'conversationEvents'] as const
 exports.apply = function apply(ctx: Ctx) {
   ctx.effect(installStyles, 'dsh-qqchat: client styles')
   ctx.conversationEvents.register(createQQMessageDefinition())
 
   ctx.slots.inject('settings.section', () => ctx.slots.register({ name: 'settings.section', id: 'qqchat', order: 35, label: () => 'QQ Chat', inject: () => ({ rpc: ctx.connection.rpc }) }, QQSettings))
-  ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({ name: 'sidebar.footer.action', id: 'qqchat', order: 10, inject: () => ({ rpc: ctx.connection.rpc, sessions: ctx.sessions }) }, QQSidebarAction))
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: 'qqchat-message' }, QQTranscriptNode))
   ctx.slots.inject('conversation.composer', () => ctx.slots.register({ name: 'conversation.composer', priority: -50, select: (owner: { session?: { sessionId?: string } }) => {
     const sessionId = String(owner.session?.sessionId || '')
