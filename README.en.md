@@ -4,33 +4,32 @@
 
 `dsh-qqchat` is a QQ Chat plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness).
 
-It connects DSH to the **official QQ Bot** platform and provides QR binding, direct messages, group chats, stable member identity, Gugu-style group/member memory, proactive sending, and a QQ experience embedded into DSH's main workspace.
+It connects through the **official QQ Bot** platform. The plugin does not build a second chat backend: **QQ groups and direct messages are mapped to ordinary DSH Sessions**, shown in DSH's normal Session/workspace list and rendered in the main Conversation surface.
 
-> This uses official QQ Bot authorization, not personal QQ-account login.
+> This is official QQ Bot authorization, not personal QQ-account QR login.
 
 ## Features
 
-Current alpha features include:
-
-- official QQ Bot QR authorization
-- Gateway WebSocket heartbeat/reconnect/resume
-- C2C and group messages
-- stable sender identity: `user_openid → member_openid → id`
-- group receive modes: **Auto reply / Mention only / Silent record**
-- outbound compatibility modes: **Smart / Markdown / Plain compatibility**
-- group-member tool permission switch
-- one DSH Session per QQ group or direct peer
-- QQ messages rendered in the normal DSH conversation workspace
-- a QQ group/direct-chat picker
-- a QQ-specific composer that sends directly to QQ
-- group/member memory viewer in the session header
-- plugin log viewer in Settings
-- dedicated SQLite persistence with WAL
-- group-scope and member-scope long-term memory
-- DSH Agent loop integration instead of a second AgentLoop
+- Official QQ Bot QR authorization
+- Gateway WebSocket heartbeat, reconnect and resume
+- Group chat and C2C direct messages
+- Stable sender identity: `user_openid -> member_openid -> id`
+- Group receive modes: **Auto reply / Mention only / Silent record**
+- Reply formats: **Smart / Markdown / Plain compatibility**
+- Group-member tool permission switch and Owner stable ID
+- One DSH Session per QQ group/direct peer
+- Native DSH Session titles and Conversation UI
+- Direct QQ composer for proactive messages
+- Group memory, member memory and direct-user memory views
+- Plugin logs in Settings
+- Dedicated SQLite database in WAL mode
+- Group-scope and member-scope long-term memory
+- Idle/batch asynchronous memory reflection
 - TypeScript Host and Client sources
 
-## Installation
+The alpha still needs full real-world QQ + DSH E2E validation. Rich media, full QQ emoji handling and production migration tooling are outside the first release scope.
+
+## Install
 
 ### Dedicated `qqchat` profile
 
@@ -41,145 +40,222 @@ npx @deepseek-ai/dsh plugin --profile qqchat add @deepseek-ai/dsh-web-app dsh-qq
 npx @deepseek-ai/dsh --profile qqchat
 ```
 
-If you already use the built-in `web` profile:
+### Existing `web` profile
 
 ```bash
 npx @deepseek-ai/dsh plugin --profile web add dsh-qqchat
 npx @deepseek-ai/dsh --profile web
 ```
 
-### Private GitHub alpha
+### Current private branch
+
+Before npm publication:
 
 ```bash
 npx @deepseek-ai/dsh plugin --profile qqchat add @deepseek-ai/dsh-web-app "git+ssh://git@github.com/Coffeiz/dsh-qqchat.git#agent/typescript-migration"
 npx @deepseek-ai/dsh --profile qqchat
 ```
 
-Git installation uses `prepare` to build the TypeScript sources. If pnpm blocks the Git dependency build script, allow `dsh-qqchat` in the profile's `pnpm-workspace.yaml` as instructed by DSH/pnpm and reinstall.
+Git installs build TypeScript through `prepare`.
 
-## UI model
+For local development:
 
-### Settings is configuration only
-
-**Settings → QQ Chat** contains:
-
-- connection / QR binding
-- group receive mode
-- message compatibility format
-- group-member tool permission
-- Owner stable sender ID
-- **View logs**
-
-It does not contain the actual group/direct conversation browser anymore.
-
-Group modes:
-
-| Mode | Record messages | Wake Agent | Reply |
-| --- | --- | --- | --- |
-| Auto reply | yes | every message | yes |
-| Mention only | yes | only `@Bot` | only `@Bot` |
-| Silent record | yes | no | no |
-
-### Chats live in the DSH workspace
-
-A **QQ Chat** action is added to the DSH sidebar. It lists both groups and direct peers. Selecting one ensures its DSH Session exists and opens it with DSH's own `sessions.open()` API.
-
-QQ sessions use titles such as:
-
-```text
-QQ Group · <name>
-QQ DM · <name>
+```bash
+git clone git@github.com:Coffeiz/dsh-qqchat.git
+cd dsh-qqchat
+git switch agent/typescript-migration
+npm install
+npm run check
 ```
 
-Incoming QQ messages are rendered as QQ-specific conversation bubbles in the standard DSH conversation area. The QQ session composer sends directly to QQ rather than creating a local DSH prompt.
+## First connection
 
-A **QQ Memory** button in the session header opens group or member memory.
+1. Start DSH.
+2. Open **Settings -> QQ Chat**.
+3. Choose **Scan to connect**.
+4. Scan with QQ and authorize the desired Bot.
+5. The Host decrypts the AppSecret and stores it in the local plugin database.
+6. The QQ Gateway starts automatically.
 
-## Data and model-history separation
+The temporary QR AES key never travels through the browser Client RPC.
 
-The plugin intentionally separates three layers:
+## Settings only contains configuration
 
-```text
-QQ real history      -> qqchat.sqlite
-DSH display transcript -> qqchat/message Session events
-Model-visible Agent history -> DSH surface (user/assistant/tool events)
-```
-
-Every QQ message may be recorded as a custom `qqchat/message` event so silent group traffic can still appear in the main DSH workspace. That event is display-only and does not enter the model-visible surface.
-
-DSH only treats Sessions with a `turn/start` as engaged workspace conversations. When a QQ Session is created for the first time, the plugin therefore submits one internal `qq-chat-bootstrap` wake and immediately rejects it in `agent/pre-step`. The bootstrap creates only an empty turn boundary: it has no model step, performs no LLM request, and sends nothing to QQ.
-
-Only messages selected by the receive policy run a real Agent turn. Before `followup()`, recent QQ history, group memory, member memory, and stable sender metadata are reconstructed from SQLite.
-
-## Tool permission
-
-When **Group members can use tools** is enabled, any group member who triggers the Agent may use all tools visible from the current Agent preset.
-
-When disabled, the plugin uses DSH's `tools/pre-execute` policy seam:
+The Settings page does not host chat lists, transcripts or memory browsing. It contains:
 
 ```text
-senderId == Owner stable ID -> allow
-otherwise                   -> deny
+Connection / QR authorization
+
+Receive mode
+  Auto reply / Mention only / Silent record
+
+Reply format
+  Smart / Markdown / Plain compatibility
+
+Tool permissions
+  Group members can use tools [on/off]
+  Owner stable ID
+
+Diagnostics
+  View logs
 ```
 
-If no Owner stable ID is configured, group-triggered tool calls fail closed. Identity is never inferred from nickname.
+Receive behavior:
 
-## Memory
+| Mode | Store QQ history | Feed memory | Wake Agent | Reply |
+| --- | --- | --- | --- | --- |
+| Auto reply | yes | yes | every message | yes |
+| Mention only | yes | yes | only @Bot | only @Bot |
+| Silent record | yes | yes | no | no |
 
-Group scope:
+Silent record never invokes the LLM just for observing a message.
 
+## QQ chats are normal DSH Sessions
+
+Each peer maps to one Session:
+
+```text
+QQ group  -> qqchat-<uuid>
+QQ direct -> qqchat-<uuid>
+```
+
+Session titles:
+
+```text
+QQ Group · <group name>
+QQ Direct · <nickname>
+```
+
+The plugin no longer registers a separate QQ footer chat picker. DSH's normal Session list is the navigation authority.
+
+DSH hides sessions that never opened a turn. For a new silent-only QQ peer, the plugin submits an internal `qq-chat-bootstrap` wake and rejects it in `agent/pre-step`. This records a turn boundary without opening a model step, calling an LLM or sending anything to QQ, making the Session visible without adding model-visible chat content.
+
+## Conversation and duplicate prevention
+
+Messages that should trigger the Agent use DSH's native `user/message` flow:
+
+```text
+QQ inbound -> SQLite -> Agent.followup() -> user/message
+           -> DSH Conversation -> Assistant/Tools -> QQ reply
+```
+
+They are **not** also appended as `qqchat/message`, so the same incoming QQ message is not rendered twice.
+
+Reliable QQ identity is retained in the user message source metadata, while recent group history, group memory, member memory and stable sender IDs are injected as a separate context snapshot before the model step.
+
+Messages that do not wake the Agent use the plugin's log-only event:
+
+```text
+qqchat/message
+```
+
+That event is visible in the Conversation transcript but never enters the model surface. The complete real-world QQ transcript remains in `qqchat.sqlite`.
+
+## QQ Session composer
+
+The composer in a QQ Session sends directly to QQ:
+
+```text
+DSH Web composer -> QQ API -> group/direct peer
+```
+
+It does not run another local Agent turn.
+
+## Memory UI
+
+The **QQ Memory** action in a QQ Session shows:
+
+For a group:
 - `profile`
 - `summary`
 - `daily`
 - `memory`
+- member list with stable sender IDs
 
-Member scope:
-
+Clicking a member opens that member's:
 - `profile`
 - `pattern`
 - `summary`
 
-Reflection is asynchronous and batched/idle-triggered rather than one LLM call per message.
+For a direct chat:
+- `profile`
+- `pattern`
+- `summary`
+
+The same stable sender may preserve personal memory across groups under the same Bot, while group relationships and group-specific facts stay isolated in each group scope.
+
+## Tool permissions
+
+When **Group members can use tools** is enabled, any group-triggered Agent turn can use every tool exposed by the current preset.
+
+When disabled, only the configured Owner stable ID may execute tools. Other group members can still talk to the Agent, but `tools/pre-execute` denies tool execution.
+
+The permission gate uses DSH's official tool policy seam rather than modifying AgentLoop.
+
+## Memory reflection
+
+Default reflection triggers:
+
+- about 120 seconds of group inactivity, or
+- 20 unreflected messages.
+
+Reflection reuses the group's actual Agent provider/model route and includes stable sender IDs.
 
 ## SQLite
 
-Default database:
+Default path:
 
 ```text
 $DSH_HOME/plugins/dsh-qqchat/qqchat.sqlite
 ```
 
-Core tables include `accounts`, `auth_tasks`, `groups`, `members`, `group_members`, `messages`, `memory_documents`, `reflection_state`, `plugin_settings`, and `outbox`.
+Initialization:
+
+```sql
+PRAGMA journal_mode=WAL;
+PRAGMA foreign_keys=ON;
+PRAGMA busy_timeout=5000;
+```
+
+Core tables cover accounts, QR tasks, groups, members, group membership, complete QQ message history, memory documents, reflection cursors, plugin settings and proactive-message outbox state.
+
+DSH Session and plugin persistence remain separate concerns:
+
+```text
+DSH Session
+  Agent participation, model output, tools, visible DSH transcript
+
+qqchat.sqlite
+  What actually happened on QQ, identities, full history and memory state
+```
 
 ## Development
 
 ```bash
-npm install
 npm run typecheck
 npm test
 npm run build
+npm run check
 ```
 
-Source layout:
+Host source: `src/*.ts`  
+Client source: `client-src/*.cts`  
+Build output: `lib/`
 
-```text
-src/*.ts                 Host
-client-src/*.cts    DSH Client
-tests/*.test.ts          tests
-lib/                     generated output
-```
+See [docs/ARCHITECTURE.en.md](./docs/ARCHITECTURE.en.md) for more detail.
 
-See [docs/ARCHITECTURE.en.md](./docs/ARCHITECTURE.en.md) for implementation boundaries.
+## Remaining real-environment checks
 
-## Security
+The code follows DSH Session / Conversation / Tool-policy extension points, but these items still require a real QQ + DSH run:
 
-- QQ AppSecret is never returned through Client RPC.
-- QR AES keys remain Host-only.
-- `/qqchat` RPC uses DSH Connection with `authority: 'loopback'`.
-- permissions and memory keys use stable sender IDs, never nicknames.
-- group tool authorization uses DSH `tools/pre-execute`, not AgentLoop patches.
-- `qqchat.sqlite` contains private message and memory data and should be protected accordingly.
+1. Complete mobile QR authorization.
+2. Gateway reconnect/resume under real network failures.
+3. All three receive modes in a real group.
+4. Session-list ordering/refresh behavior on the target DSH Web version.
+5. Streaming model output and tool-call completion before QQ delivery.
+6. Markdown/plain compatibility across QQ clients.
+7. Long-running memory reflection and SQLite concurrency.
 
 ## License
 
-Private development stage: `UNLICENSED`.
+The private alpha currently has no open-source grant. A public license will be selected before release.
