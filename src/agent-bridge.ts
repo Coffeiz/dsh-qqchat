@@ -136,7 +136,8 @@ export class DshQQBridge {
       }))
       const current = createUserMessage({
         source: {
-          kind: 'qq-chat',
+          kind: 'user',
+          channel: 'qq',
           botId: String(message.accountId),
           chatType: message.chatType,
           chatId: message.chatId,
@@ -144,10 +145,8 @@ export class DshQQBridge {
           senderName: message.senderName || undefined,
           messageId: message.messageId || '',
           mentioned: Boolean(message.mentioned),
-          form: 'notice',
-          summary: `QQ ${message.chatType === 'group' ? '群聊' : '私聊'}消息 · ${message.senderName || shortId(message.senderId)}`,
         },
-        content: [{ type: 'text', text: this.memory.currentMessageText(message) }],
+        content: [{ type: 'text', text: visiblePromptText(message) }],
       })
       this.pending.set(String(sessionId), { text: '' })
       this.activeActors.set(String(sessionId), { chatType: message.chatType, senderId: message.senderId })
@@ -331,6 +330,15 @@ function displayEventFromRow(row: MessageRow, chatType: ChatType, target: GroupR
     mentioned: row.mentioned === 1,
     createdAt: Number(row.created_at),
   }
+}
+
+function visiblePromptText(message: QQNormalizedMessage): string {
+  const body = message.quotedText
+    ? `> ${message.quotedText}\n\n${message.text || '(空消息)'}`
+    : message.text || '(空消息)'
+  if (message.chatType !== 'group') return body
+  const speaker = message.senderName || shortId(message.senderId)
+  return `${speaker}\n${body}`
 }
 
 function extractText(content: readonly unknown[]): string {
