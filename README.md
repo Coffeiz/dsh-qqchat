@@ -1,144 +1,153 @@
 # dsh-qqchat
 
-`dsh-qqchat` is a private, self-contained QQ channel plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness).
+[English](./README.en.md)
 
-It connects DSH to the **official QQ Bot** platform, keeps QQ/group state in its own SQLite database, and adds a DSH-native settings surface for QR authorization, group chat inspection, group/member memory, and proactive group messages.
+`dsh-qqchat` 是一个为 [DeepSeek Harness（DSH）](https://github.com/deepseek-ai/deepseek-harness) 开发的 QQ 聊天插件。
 
-> This is official QQ Bot authorization. It does **not** log into a personal QQ account.
+它通过 **QQ 官方 Bot** 接入 DSH，支持私聊、群聊、扫码授权、群成员身份识别、群历史、群/成员长期记忆、主动消息，以及遵循 DSH 现有视觉风格的管理界面。
 
-## Status
+> 当前接入方式是 QQ 官方 Bot 授权，不是个人 QQ 账号登录。
 
-Current version: `0.1.0-alpha.1`
+## 功能
 
-Implemented in this alpha:
+当前 `0.1.0-alpha.1` 包含：
 
-- QQ official QR bot authorization (`q.qq.com` bind-task flow)
-- Raw QQ Gateway WebSocket with heartbeat, reconnect, resume, C2C and group events
-- Stable group-member identity (`user_openid` → `member_openid` → `id` fallback)
-- Group read/reply policy: enable group, require `@`, optionally read silent group traffic
-- One DSH Agent session per QQ group / private peer
-- DSH model/tool loop used for actual replies; no second custom agent loop
-- Passive QQ reply with active-send fallback
-- Proactive group sending from the plugin UI and a durable outbox table
-- Dedicated SQLite database, WAL mode
-- Gugu-style memory semantics: group scope + member scope, recent history, `profile`, `summary`, `daily`, `memory`, `pattern`, asynchronous reflection
-- DSH-native client surface using the current `settings.section` slot and DSH `--dsw-*` design tokens
-- Group list, member-aware conversation bubbles, group memory viewer, member memory viewer and group controls
+- QQ 官方 Bot 扫码授权
+- QQ Gateway WebSocket、心跳、断线重连与 Resume
+- C2C 私聊与群聊消息
+- 稳定群成员身份：`user_openid → member_openid → id`
+- 群聊策略：启用/停用、是否必须 `@`、是否读取普通群消息
+- 每个 QQ 群 / 私聊对象映射独立 DSH Agent Session
+- 回复直接使用 DSH Agent loop，不再实现第二套 AgentLoop
+- 主动群消息与持久化 outbox
+- 独立 SQLite 数据库（WAL）
+- 群 scope + 成员 scope 长期记忆
+- DSH 原生 UI：扫码、群列表、群友对话气泡、群记忆、成员记忆、群设置
+- TypeScript 源码
 
-Not yet covered by this alpha: rich QQ media/file send, the full Gugu QQ-face parser, production migration tooling, and a live QQ/DSH end-to-end CI fixture.
+当前 alpha 暂未覆盖完整富媒体发送、完整 QQ 表情解析、生产级数据库迁移工具和真实 QQ + DSH 自动化 E2E。
 
-## Requirements
+## 安装
 
-- DeepSeek Harness `0.1.0-rc.8` compatible runtime
-- Node.js `^22.19.0` or `>=24`
-- `pnpm` available to the `dsh plugin` command
-- A DSH profile with the Web UI (examples below use profile `web`)
-- GitHub SSH access if installing directly from this private repository
+### 方式一：独立 `qqchat` profile（推荐）
 
-## Install from the private GitHub repository
+使用方式可以和腾讯官方 QQ Bot 插件一样，为 QQ 单独准备一个 profile。
 
-DSH's plugin command is a profile-scoped `pnpm` forwarder. Because this package declares `dsh.bundle`, installing it also activates its `cordis.patch.yml` layer in that profile.
+`dsh-qqchat` 自带扫码、对话气泡和记忆查看 UI，因此第一次安装时同时加入 DSH Web bundle：
 
 ```bash
-dsh plugin --profile web add "git+ssh://git@github.com/Coffeiz/dsh-qqchat.git"
+# 安装到独立 qqchat profile
+npx @deepseek-ai/dsh plugin --profile qqchat add @deepseek-ai/dsh-web-app dsh-qqchat
+
+# 启动
+npx @deepseek-ai/dsh --profile qqchat
 ```
 
-Then restart DSH:
+DSH 会为新的自定义 profile 自动初始化 `dsh-base`；`@deepseek-ai/dsh-web-app` 提供 DSH Web 界面，`dsh-qqchat` 提供 QQ Host + Client 插件。
+
+启动后打开 DSH Web UI，进入 **Settings → QQ Chat**，点击 **扫码连接**。
+
+> 当前仓库仍是私有 alpha。在 `dsh-qqchat` 发布到 npm 前，请使用下面的 Git 安装方式。
+
+### 方式二：安装到已有 `web` profile
+
+如果你本来就在使用 DSH 的 `web` profile，不需要再创建 `qqchat`：
 
 ```bash
-dsh --profile web
+npx @deepseek-ai/dsh plugin --profile web add dsh-qqchat
+npx @deepseek-ai/dsh --profile web
 ```
 
-Open **Settings → QQ Chat** and click **扫码连接**.
+### 方式三：从私有 GitHub 安装
 
-If your DSH profile is not named `web`, replace `web` with that profile name.
-
-### Update
+当前测试 TypeScript 分支：
 
 ```bash
-dsh plugin --profile web update dsh-qqchat
+npx @deepseek-ai/dsh plugin --profile qqchat add @deepseek-ai/dsh-web-app "git+ssh://git@github.com/Coffeiz/dsh-qqchat.git#agent/typescript-migration"
+npx @deepseek-ai/dsh --profile qqchat
 ```
 
-### Remove
+以后 `main` 稳定后可去掉分支后缀：
 
 ```bash
-dsh plugin --profile web remove dsh-qqchat
+npx @deepseek-ai/dsh plugin --profile qqchat add @deepseek-ai/dsh-web-app "git+ssh://git@github.com/Coffeiz/dsh-qqchat.git"
+npx @deepseek-ai/dsh --profile qqchat
 ```
 
-Removing the package does not intentionally delete the plugin data directory. The default data file is:
+Git 安装要求本机已经配置 GitHub SSH 权限。Git 依赖会通过 `prepare` 从 TypeScript 生成 `lib`；如果 pnpm 阻止 Git 依赖执行构建脚本，请按 DSH / pnpm 的提示允许 `dsh-qqchat` 构建后重新安装。
+
+### 本地源码安装
+
+```bash
+git clone git@github.com:Coffeiz/dsh-qqchat.git
+cd dsh-qqchat
+git switch agent/typescript-migration
+
+npm install
+npm run build
+
+npx @deepseek-ai/dsh plugin --profile qqchat add @deepseek-ai/dsh-web-app .
+npx @deepseek-ai/dsh --profile qqchat
+```
+
+### 更新与卸载
+
+npm 发布后：
+
+```bash
+npx @deepseek-ai/dsh plugin --profile qqchat update dsh-qqchat
+npx @deepseek-ai/dsh plugin --profile qqchat remove dsh-qqchat
+```
+
+卸载插件不会主动删除本地数据。默认数据库：
 
 ```text
 $DSH_HOME/plugins/dsh-qqchat/qqchat.sqlite
 ```
 
-Delete that directory manually only when you also want to remove local QQ credentials, chat history and memory.
+## 扫码连接
 
-## Install from a local checkout
+1. 打开 **Settings → QQ Chat**。
+2. 点击 **扫码连接**。
+3. Host 创建 QQ `bind_task` 和临时 AES-256 key。
+4. 使用手机 QQ 扫码并选择需要授权的 QQ Bot。
+5. QQ 返回 AppID 与 AES-GCM 加密的 AppSecret。
+6. AppSecret 只在 DSH Host 进程中解密，并写入插件 SQLite。
+7. 插件立即启动 QQ Gateway WebSocket。
 
-Useful during development:
-
-```bash
-git clone git@github.com:Coffeiz/dsh-qqchat.git
-cd dsh-qqchat
-npm install
-npm run build
-npm test
-
-dsh plugin --profile web add .
-```
-
-DSH anchors relative plugin paths to the directory in which you invoke the command, so `add .` can be run directly from this repository.
-
-## First connection
-
-1. Open **Settings → QQ Chat**.
-2. Click **扫码连接**.
-3. The Host generates a random AES-256 key and starts a QQ `bind_task`.
-4. Scan the QR code in the QQ mobile app and choose the QQ Bot to authorize.
-5. QQ returns the AppID and an AES-GCM encrypted AppSecret.
-6. The secret is decrypted only in the DSH Host process and written to the local plugin SQLite database.
-7. `dsh-qqchat` starts the QQ Gateway WebSocket immediately.
-
-The temporary AES key is never sent to the browser. The QR panel receives only the QR data URL / task id needed for polling.
+临时 AES key 不会发到浏览器；Client 只得到展示二维码和查询状态需要的数据。
 
 ## UI
 
-The browser half is a normal DSH client plugin. It does not open another local web server and does not ship a separate admin application.
-
-It registers a **QQ Chat** section into DSH Settings and communicates with the Host through DSH's existing Connection RPC transport (`/qqchat`, loopback authority).
-
-The connected view has three areas:
+插件直接注册到 DSH `settings.section`，不另起后台网页或管理端口。
 
 ```text
 ┌──────────────┬───────────────────────────────┬──────────────────┐
-│ Groups       │ Conversation                  │ Group inspector  │
+│ 群列表       │ 群聊                         │ 群信息           │
 │              │                               │                  │
-│ Project A    │ Alice  …stable-id             │ Group memory     │
-│ Friends      │ ┌──────────────────────────┐  │ Members          │
-│ ...          │ │ message bubble           │  │ Settings         │
+│ 项目群       │ Alice  …stable-id             │ 群记忆           │
+│ 朋友群       │ ┌──────────────────────────┐  │ 群友             │
+│ ...          │ │ 群友消息气泡             │  │ 设置             │
 │              │ └──────────────────────────┘  │                  │
 │              │                  DSH Agent    │ profile          │
 │              │             ┌─────────────┐   │ summary          │
-│              │             │ reply bubble│   │ memory / daily   │
-└──────────────┴──────────────┴─────────────┴──────────────────────┘
+│              │             │ 回复气泡    │   │ memory / daily   │
+└──────────────┴───────────────────────────────┴──────────────────┘
 ```
 
-The CSS intentionally consumes DSH's own `--dsw-*` design tokens so light/dark theme and visual hierarchy follow the host application.
+UI 优先使用 DSH 的 `--dsw-*` design token，因此明暗主题和层级会跟随 DSH。
 
-## Message routing
+## 消息与 Session
 
-Every QQ message that the configured read policy accepts is written to `qqchat.sqlite` first.
+QQ 群真实历史和 DSH Agent 对话是两套不同的数据面：
 
 ```text
 QQ Gateway
     │
-    ├─ normalize reliable sender/group identity
-    │
-    ├─ persist message / member / group
-    │
-    ├─ silent non-@ traffic ───────► memory history only
-    │
-    └─ message requiring response
+    ├─ 规范化 sender / group identity
+    ├─ 写入 SQLite：message / member / group
+    ├─ 普通未触发消息 ───────► 群历史 / 记忆
+    └─ 需要回复
               │
               ▼
           DSH Agent
@@ -147,13 +156,11 @@ QQ Gateway
           QQ outbound
 ```
 
-A group is mapped to one DSH Session, but **the complete group history is not copied into the DSH Session**. Only the turns where the Agent participates enter the DSH conversation. Recent group traffic and long-term memory are injected as a model-visible snapshot before the current QQ turn.
+一个群对应一个 DSH Session，但**不会把完整群历史全部塞进 DSH Session**。只有 Agent 真正参与的 turn 进入 DSH 会话；回复前再注入近期群聊、群记忆和当前成员记忆。
 
-This keeps the DSH Session focused while still allowing the Agent to understand ongoing group context.
+## 群成员身份
 
-## Reliable member identity
-
-For QQ group messages the identity order is:
+身份优先级：
 
 ```text
 user_openid
@@ -163,51 +170,42 @@ member_openid
 id
 ```
 
-Nicknames / usernames are presentation metadata only. Memory and attribution are keyed by the stable platform sender ID, and the model-facing context explicitly says not to infer identity from nicknames.
+昵称只用于展示，不作为身份、权限或记忆主键。
 
-## Memory model
+## 记忆系统
 
-The first version deliberately mirrors the semantics used by Gugu's group memory system while using a single SQLite database instead of Gugu's server-side file/database combination.
+第一版沿用咕咕群记忆系统的核心语义，但持久化统一放在插件自己的 SQLite。
 
-### Group scope
+### 群 scope
 
-A group stores:
+- `profile`：稳定群画像、角色和结构
+- `summary`：当前阶段紧凑总结
+- `daily`：近期重要变化
+- `memory`：长期决定、关系、项目、约定和重复话题
 
-- `profile` — stable group profile / roles / recurring structure
-- `summary` — current compact group summary
-- `daily` — date-stamped recent durable developments
-- `memory` — long-lived decisions, relationships, projects, agreements, recurring topics
+群相关事实不会跨群泄漏。
 
-Group-specific facts never flow to another group.
+### 成员 scope
 
-### Member scope
+- `profile`：较稳定个人事实
+- `pattern`：反复出现的偏好 / 行为模式
+- `summary`：当前个人摘要
 
-A stable QQ member stores:
+同一个 QQ Bot 下，同一 stable sender 可以跨群保持个人层面的连续记忆；群内关系和群内事件仍属于对应群 scope。
 
-- `profile` — stable facts about the person
-- `pattern` — recurring preferences / behavior patterns with conservative extraction
-- `summary` — compact current member summary
+### 异步反思
 
-Member scope is keyed under the same QQ Bot account, so the same stable QQ sender can retain personal context across groups while group-specific facts stay in the group scope.
-
-### Reflection
-
-Reflection is asynchronous rather than one model call per chat message:
-
-- trigger after an idle window (default 120 seconds), or
-- trigger when enough unreflected messages accumulate (default 20)
-
-The reflection call reuses the provider/model route actually used by that group's DSH Agent. It receives reliable sender IDs, the existing memory documents, and the unreflected transcript, then returns structured JSON updates.
+默认在群聊空闲约 120 秒，或未反思消息达到约 20 条时整理记忆，不会每条消息都调用一次 LLM。反思沿用该群 DSH Agent 实际使用的 provider/model 路由。
 
 ## SQLite
 
-Default database:
+默认数据库：
 
 ```text
 $DSH_HOME/plugins/dsh-qqchat/qqchat.sqlite
 ```
 
-The plugin uses Node's built-in `node:sqlite` `DatabaseSync` and enables:
+使用 Node `node:sqlite` `DatabaseSync`，默认：
 
 ```sql
 PRAGMA journal_mode=WAL;
@@ -215,25 +213,30 @@ PRAGMA foreign_keys=ON;
 PRAGMA busy_timeout=5000;
 ```
 
-The database contains these main tables:
+主要表：
 
 ```text
-accounts            QQ AppID / AppSecret and gateway state
-auth_tasks          short-lived QR bind-task AES keys
-groups              QQ group settings + mapped DSH Session id
-members             stable QQ sender identity + private Session id
-group_members       group-local display identity
-messages            accepted inbound / outbound chat history
-memory_documents    group/member profile/summary/daily/memory/pattern
-reflection_state    memory reflection cursor
-outbox              proactive-send queue
+accounts
+ auth_tasks
+groups
+members
+group_members
+messages
+memory_documents
+reflection_state
+outbox
 ```
 
-The data directory is created with mode `0700` and the SQLite file is chmodded to `0600` where the platform supports POSIX modes. `0.1.x` stores the QQ AppSecret in that local database; OS-keychain / DSH credential-store integration is a possible hardening step for a later release.
+职责边界：
 
-## Configuration
+```text
+QQ 真实历史 / 身份 / 群状态 / 记忆 -> qqchat.sqlite
+Agent 可见 turn / tool call / 回复     -> DSH Session
+```
 
-The bundle defaults to:
+## 配置
+
+bundle 默认插入：
 
 ```yaml
 - insert:
@@ -243,101 +246,58 @@ The bundle defaults to:
         dataDir: !!js dshHomePath('plugins/dsh-qqchat')
 ```
 
-You can override the row in the profile's later `cordis.patch.yml` layer. A patch replaces the row config, so restate `dataDir` when adding fields:
+常用配置：
 
-```yaml
-- id: dsh-qqchat
-  config:
-    dataDir: !!js dshHomePath('plugins/dsh-qqchat')
-    agentPreset: default
-    groupRequiresAt: true
-    groupReadEnabled: true
-    replyFormat: smart
-    reflectionIdleMs: 120000
-    reflectionBatchSize: 20
-```
-
-Available Host options:
-
-| Field | Default | Purpose |
+| 字段 | 默认值 | 说明 |
 | --- | --- | --- |
-| `dataDir` | `$DSH_HOME/plugins/dsh-qqchat` | Plugin state directory |
-| `source` | `dsh-qqchat` | QQ bind page source label |
-| `sandbox` | `false` | QQ sandbox API |
-| `agentPreset` | DSH default | Preset mounted for QQ Agent sessions |
-| `provider` / `model` | DSH route | Optional explicit model route |
-| `maxTokens` | DSH default | Optional Agent output limit |
-| `groupChatEnabled` | `true` | Master group handling switch |
-| `groupRequiresAt` | `true` | Default for newly discovered groups |
-| `groupReadEnabled` | `true` | Record silent non-@ messages by default |
-| `replyFormat` | `smart` | `smart`, `markdown`, or `compat` |
-| `recentGroupMessages` | `40` | Recent context lines injected before a group turn |
-| `reflectionIdleMs` | `120000` | Idle reflection delay |
-| `reflectionBatchSize` | `20` | Immediate reflection threshold |
-| `reflectionMaxMessages` | `80` | Max messages per reflection call |
-| `memoryMaxTokens` | `1400` | Reflection output token cap |
+| `dataDir` | `$DSH_HOME/plugins/dsh-qqchat` | 插件数据目录 |
+| `agentPreset` | DSH 默认 | QQ Session 使用的 preset |
+| `provider` / `model` | DSH 当前路由 | 可选固定模型 |
+| `groupChatEnabled` | `true` | 群聊总开关 |
+| `groupRequiresAt` | `true` | 新群默认要求 @ |
+| `groupReadEnabled` | `true` | 记录普通未 @ 群消息 |
+| `recentGroupMessages` | `40` | 回复前注入的近期消息数 |
+| `reflectionIdleMs` | `120000` | 空闲反思等待时间 |
+| `reflectionBatchSize` | `20` | 立即反思阈值 |
 
-Per-group `enabled`, `requires @`, and `read group messages` are editable directly in the QQ Chat UI and persisted in SQLite.
+每个群也可以直接在 QQ Chat UI 中单独修改。
 
-## Development
+## TypeScript 开发
+
+TypeScript 是源码真相：
+
+```text
+src/*.ts                 Host
+client-src/plugin.cts    DSH Client UI
+tests/*.test.ts          测试
+lib/*.js + lib/*.d.ts    构建产物（不提交）
+```
 
 ```bash
 npm install
-npm run check
+npm run typecheck
 npm test
 npm run build
 ```
 
-`npm run build` wraps `client-src/plugin.cjs` in the current DSH lazy-CJS client-module factory format and writes `lib/client.js`:
+Git 安装通过 `prepare` 构建；npm 发布前通过 `prepublishOnly` 重新检查和构建。最终 DSH 运行的是普通 JavaScript，不需要 TypeScript runtime。
 
-```js
-window.__ModuleLoader__.load({ id: 'dsh-qqchat', factory: (require) => {
-  // ...client module...
-  return module.exports
-} })
-```
+详细边界见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)。
 
-This small local builder exists because DSH's own `clientBundle()` tsdown preset is currently internal to the DeepSeek Harness monorepo rather than published for third-party packages.
+## 安全
 
-## Repository layout
+- QQ AppSecret 不通过插件 RPC 返回给 UI。
+- 扫码 AES key 只保留在 Host 侧。
+- 插件 RPC 使用 DSH Connection `authority: 'loopback'`。
+- 成员记忆以 stable sender ID 为主键。
+- 原始 QQ event 会保存在本地数据库，因此 `qqchat.sqlite` 应视为私有用户数据。
+- 当前 `0.1.x` 会把 QQ AppSecret 保存在本地 SQLite，后续可迁移到系统 Keychain 或 DSH credential store。
 
-```text
-dsh-qqchat/
-├── cordis.patch.yml
-├── client-src/
-│   └── plugin.cjs            # DSH-native Settings UI source
-├── lib/
-│   ├── index.js              # package Host entry
-│   └── client.js             # generated lazy-CJS DSH client bundle
-├── scripts/
-│   └── build-client.mjs
-├── src/
-│   ├── index.js              # Cordis Host plugin entry
-│   ├── runtime.js            # QQ runtime / group reply policy / outbox
-│   ├── qq-auth.js            # QR bind task
-│   ├── qq-gateway.js         # raw QQ WebSocket gateway
-│   ├── qq-api.js             # token + outbound QQ REST calls
-│   ├── normalize.js          # QQ event normalization / reliable IDs
-│   ├── agent-bridge.js       # QQ ↔ DSH Agent/Session bridge
-│   ├── memory.js             # group/member memory + reflection
-│   ├── rpc.js                # loopback DSH Connection RPC endpoints
-│   ├── db.js                 # SQLite schema / repositories
-│   ├── crypto.js
-│   └── config.js
-└── tests/
-```
+## 文档
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the internal data flow and boundaries.
-
-## Security notes
-
-- QQ AppSecret is never exposed through the plugin RPC or UI status payload.
-- The QR AES key remains Host-side in SQLite and is deleted after success / expiry pruning.
-- Plugin RPC is registered with DSH Connection using `authority: 'loopback'`.
-- Raw QQ API error handling avoids returning the AppSecret.
-- Stable sender IDs, not nicknames, own member memory.
-- The full raw QQ event is stored in message history for debugging/context provenance; treat `qqchat.sqlite` as private user data.
+- 中文：[`README.md`](./README.md)、[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)
+- English：[`README.en.md`](./README.en.md)、[`docs/ARCHITECTURE.en.md`](./docs/ARCHITECTURE.en.md)
 
 ## License
 
-Private / proprietary for now (`UNLICENSED`).
+当前私有开发阶段：`UNLICENSED`。

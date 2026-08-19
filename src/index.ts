@@ -1,22 +1,25 @@
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { QQChatDatabase } from './db.js'
-import { resolveConfig } from './config.js'
-import { QQBindService } from './qq-auth.js'
-import { QQApiClient } from './qq-api.js'
-import { MemoryEngine } from './memory.js'
+import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-client-connection'
 import { DshQQBridge } from './agent-bridge.js'
-import { QQChatRuntime } from './runtime.js'
+import { resolveConfig } from './config.js'
+import { QQChatDatabase } from './db.js'
+import { MemoryEngine } from './memory.js'
+import { QQApiClient } from './qq-api.js'
+import { QQBindService } from './qq-auth.js'
 import { createQQChatRpc } from './rpc.js'
+import { QQChatRuntime } from './runtime.js'
+import type { LoggerLike, QQChatConfigInput } from './types.js'
 
 export const name = 'dsh-qqchat'
-export const inject = ['connection', 'agents', 'llm']
+export const inject = ['connection', 'agents', 'llm'] as const
 
-export function apply(ctx, inputConfig = {}) {
+export function apply(ctx: Context, inputConfig: QQChatConfigInput = {}): void {
   const config = resolveConfig(inputConfig)
   mkdirSync(config.dataDir, { recursive: true, mode: 0o700 })
   const db = new QQChatDatabase(join(config.dataDir, 'qqchat.sqlite'))
-  const logger = ctx.logger || console
+  const logger = (ctx as unknown as { logger?: LoggerLike }).logger || console
   const api = new QQApiClient(db, config)
   const auth = new QQBindService(db, config)
   const memory = new MemoryEngine(ctx, db, config, logger)
@@ -29,5 +32,9 @@ export function apply(ctx, inputConfig = {}) {
     return () => runtime.stop()
   }, 'dsh-qqchat runtime')
 }
+
+export type { QQChatConfig, QQChatConfigInput } from './types.js'
+export { QQChatDatabase } from './db.js'
+export { normalizeQQDispatch } from './normalize.js'
 
 export default { name, inject, apply }

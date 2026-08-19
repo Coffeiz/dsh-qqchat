@@ -1,7 +1,23 @@
-const ok = value => ({ ok: true, value })
-const fail = message => ({ ok: false, error: { code: 'internal', message, details: {} } })
+import type { ConnectionRpcHandler } from '@deepseek-ai/dsh-client-connection'
+import type { QQChatRuntime } from './runtime.js'
+import type {
+  GroupListRow,
+  GroupPatch,
+  GroupRow,
+  MemoryDocuments,
+  MessageRow,
+  PublicAccountRow,
+} from './types.js'
 
-export function createQQChatRpc(runtime) {
+type RpcSuccess<T> = { ok: true; value: T }
+type RpcFailure = { ok: false; error: { code: 'internal'; message: string; details: Record<string, never> } }
+export type QQChatRpcResult<T = unknown> = RpcSuccess<T> | RpcFailure
+export type QQChatRpcHandler = ConnectionRpcHandler
+
+const ok = <T>(value: T): RpcSuccess<T> => ({ ok: true, value })
+const fail = (message: string): RpcFailure => ({ ok: false, error: { code: 'internal', message, details: {} } })
+
+export function createQQChatRpc(runtime: QQChatRuntime): ConnectionRpcHandler {
   return async (endpoint, payload) => {
     try {
       switch (endpoint) {
@@ -42,7 +58,7 @@ export function createQQChatRpc(runtime) {
           return ok(true)
         }
         case 'groups/list':
-          return ok(runtime.db.listGroups().map(publicGroup))
+          return ok({ groups: runtime.db.listGroups().map(publicGroup) })
         case 'group/get': {
           const id = requireNumber(payload, 'groupId')
           const view = runtime.memory.memoryView(id)
@@ -62,12 +78,13 @@ export function createQQChatRpc(runtime) {
         }
         case 'group/messages': {
           const id = requireNumber(payload, 'groupId')
-          const limit = Math.max(1, Math.min(300, Number(payload?.limit || 120)))
-          return ok(runtime.db.listMessages(id, limit).map(publicMessage))
+          const limit = Math.max(1, Math.min(300, Number(asRecord(payload)?.limit || 120)))
+          return ok({ messages: runtime.db.listMessages(id, limit).map(publicMessage) })
         }
         case 'group/update': {
           const id = requireNumber(payload, 'groupId')
-          const row = runtime.db.updateGroup(id, payload?.patch || {})
+          const patch = asGroupPatch(asRecord(payload)?.patch)
+          const row = runtime.db.updateGroup(id, patch)
           if (!row) throw new Error('群不存在')
           return ok(publicGroup(row))
         }
@@ -92,7 +109,7 @@ export function createQQChatRpc(runtime) {
   }
 }
 
-function publicAccount(row) {
+function publicAccount(row: PublicAccountRow) {
   return {
     id: Number(row.id), appId: row.app_id, botUserId: row.bot_user_id || null,
     enabled: row.enabled === 1, sandbox: row.sandbox === 1,
@@ -100,16 +117,19 @@ function publicAccount(row) {
     createdAt: Number(row.created_at), updatedAt: Number(row.updated_at),
   }
 }
-function publicGroup(row) {
+
+function publicGroup(row: GroupRow | GroupListRow) {
+  const aggregate = row as Partial<GroupListRow>
   return {
     id: Number(row.id), accountId: Number(row.account_id), platformGroupId: row.platform_group_id,
     name: row.name || '', enabled: row.enabled === 1, requiresAt: row.requires_at === 1,
     readEnabled: row.read_enabled === 1, dshSessionId: row.dsh_session_id || null,
-    memberCount: Number(row.member_count || 0), messageCount: Number(row.message_count || 0),
-    lastMessageAt: row.last_message_at ? Number(row.last_message_at) : null,
+    memberCount: Number(aggregate.member_count || 0), messageCount: Number(aggregate.message_count || 0),
+    lastMessageAt: aggregate.last_message_at ? Number(aggregate.last_message_at) : null,
   }
 }
-function publicMessage(row) {
+
+function publicMessage(row: MessageRow) {
   return {
     id: Number(row.id), platformMessageId: row.platform_message_id || null,
     direction: row.direction, content: row.content, quotedText: row.quoted_text || '',
@@ -118,19 +138,37 @@ function publicMessage(row) {
     senderName: row.display_name || (row.direction === 'outbound' ? 'DSH Agent' : ''),
   }
 }
-function normalizeMemory(memory) {
+
+function normalizeMemory(memory: MemoryDocuments) {
   return {
     profile: memory.profile || '', summary: memory.summary || '', daily: memory.daily || '',
     memory: memory.memory || '', pattern: memory.pattern || '',
   }
 }
-function requireString(payload, key) {
-  const value = payload?.[key]
+
+function requireString(payload: unknown, key: string): string {
+  const value = asRecord(payload)?.[key]
   if (typeof value !== 'string' || !value) throw new Error(`${key} 必须是非空字符串`)
   return value
 }
-function requireNumber(payload, key) {
-  const value = Number(payload?.[key])
+
+function requireNumber(payload: unknown, key: string): number {
+  const value = Number(asRecord(payload)?.[key])
   if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${key} 必须是正整数`)
   return value
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null ? value as Record<string, unknown> : undefined
+}
+
+function asGroupPatch(value: unknown): GroupPatch {
+  const record = asRecord(value)
+  if (!record) return {}
+  const patch: GroupPatch = {}
+  if (typeof record.name === 'string') patch.name = record.name
+  if (typeof record.enabled === 'boolean') patch.enabled = record.enabled
+  if (typeof record.requiresAt === 'boolean') patch.requiresAt = record.requiresAt
+  if (typeof record.readEnabled === 'boolean') patch.readEnabled = record.readEnabled
+  return patch
 }

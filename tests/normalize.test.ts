@@ -8,6 +8,7 @@ test('group identity prefers user_openid over member_openid and nickname', () =>
     author: { user_openid: 'u-stable', member_openid: 'member-fallback', username: '随时会改的昵称' },
     mentions: [{ bot: true, is_you: true, id: 'bot-id' }],
   }, 7)
+  assert.ok(message)
   assert.equal(message.senderId, 'u-stable')
   assert.equal(message.senderName, '随时会改的昵称')
   assert.equal(message.groupOpenid, 'g1')

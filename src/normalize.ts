@@ -1,12 +1,14 @@
-function authorId(author = {}) {
+import type { QQAuthor, QQDispatchData, QQNormalizedMessage } from './types.js'
+
+function authorId(author: QQAuthor = {}): string {
   return String(author.user_openid || author.member_openid || author.id || '')
 }
 
-function authorName(author = {}) {
+function authorName(author: QQAuthor = {}): string {
   return String(author.username || author.nickname || '').trim()
 }
 
-export function messageMentionsBot(data, eventType) {
+export function messageMentionsBot(data: QQDispatchData, eventType: string): boolean {
   if (!Object.prototype.hasOwnProperty.call(data, 'mentions')) {
     return eventType === 'GROUP_AT_MESSAGE_CREATE'
   }
@@ -21,24 +23,28 @@ export function messageMentionsBot(data, eventType) {
   return false
 }
 
-export function botMentionId(data, eventType) {
+export function botMentionId(data: QQDispatchData, eventType: string): string {
   const mentions = data.mentions
   if (Array.isArray(mentions)) {
     for (const item of mentions) {
       if (!item || typeof item !== 'object' || item.bot !== true) continue
-      for (const key of ['id', 'user_openid', 'member_openid', 'openid']) {
+      for (const key of ['id', 'user_openid', 'member_openid', 'openid'] as const) {
         if (item[key]) return String(item[key])
       }
     }
   }
   if (eventType === 'GROUP_AT_MESSAGE_CREATE') {
     const match = String(data.content || '').match(/<@!?([^>]+)>/)
-    if (match) return match[1]
+    if (match?.[1]) return match[1]
   }
   return ''
 }
 
-export function normalizeQQDispatch(eventType, data, accountId) {
+export function normalizeQQDispatch(
+  eventType: string,
+  data: QQDispatchData | undefined,
+  accountId: number,
+): QQNormalizedMessage | undefined {
   if (!data || typeof data !== 'object') return undefined
   if (eventType === 'C2C_MESSAGE_CREATE') {
     const senderId = authorId(data.author)
@@ -66,7 +72,7 @@ export function normalizeQQDispatch(eventType, data, accountId) {
   return undefined
 }
 
-function extractQuotedText(data) {
+function extractQuotedText(data: QQDispatchData): string {
   const reference = data.message_reference || data.reference || data.quote
   if (!reference || typeof reference !== 'object') return ''
   return String(reference.content || reference.text || '').trim()

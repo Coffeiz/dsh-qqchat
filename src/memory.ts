@@ -1,55 +1,77 @@
+import type { Context } from '@deepseek-ai/cordis'
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { SessionId } from '@deepseek-ai/dsh-session'
+import type { QQChatDatabase } from './db.js'
+import type {
+  GroupMemberRow,
+  GroupRow,
+  LoggerLike,
+  MemoryDocType,
+  MemoryDocuments,
+  MemoryView,
+  ModelRoute,
+  QQChatConfig,
+  QQNormalizedMessage,
+  ReflectionPayload,
+} from './types.js'
 
-const DOCS = ['profile', 'summary', 'daily', 'memory', 'pattern']
+const DOCS = ['profile', 'summary', 'daily', 'memory', 'pattern'] as const satisfies readonly MemoryDocType[]
 
 export class MemoryEngine {
-  constructor(ctx, db, config, logger = console) {
-    this.ctx = ctx
-    this.db = db
-    this.config = config
-    this.logger = logger
-    this.timers = new Map()
-    this.routes = new Map()
-  }
+  private readonly timers = new Map<number, ReturnType<typeof setTimeout>>()
+  private readonly routes = new Map<number, ModelRoute>()
 
-  dispose() {
+  constructor(
+    private readonly ctx: Context,
+    private readonly db: QQChatDatabase,
+    private readonly config: QQChatConfig,
+    private readonly logger: LoggerLike = console,
+  ) {}
+
+  dispose(): void {
     for (const timer of this.timers.values()) clearTimeout(timer)
     this.timers.clear()
   }
 
-  setRoute(groupId, provider, model, sessionId) {
+  setRoute(groupId: number, provider: string, model: string, sessionId: string): void {
     if (!provider || !model) return
     this.routes.set(Number(groupId), { provider, model, sessionId })
   }
 
-  schedule(groupId) {
+  schedule(groupId: number): void {
     groupId = Number(groupId)
     const existing = this.timers.get(groupId)
     if (existing) clearTimeout(existing)
     if (this.db.unreflectedCount(groupId) >= this.config.reflectionBatchSize) {
-      void this.reflectNow(groupId).catch(error => this.logger.warn?.(`[dsh-qqchat] memory reflection: ${error.message}`))
+      void this.reflectNow(groupId).catch(error => this.logger.warn?.(`[dsh-qqchat] memory reflection: ${errorMessage(error)}`))
       return
     }
     const timer = setTimeout(() => {
       this.timers.delete(groupId)
-      void this.reflectNow(groupId).catch(error => this.logger.warn?.(`[dsh-qqchat] memory reflection: ${error.message}`))
+      void this.reflectNow(groupId).catch(error => this.logger.warn?.(`[dsh-qqchat] memory reflection: ${errorMessage(error)}`))
     }, this.config.reflectionIdleMs)
     timer.unref?.()
     this.timers.set(groupId, timer)
   }
 
-  async reflectNow(groupId) {
+  async reflectNow(groupId: number): Promise<MemoryView> {
     groupId = Number(groupId)
     const route = this.routes.get(groupId)
     if (!route) throw new Error('这个群还没有可复用的 DSH 模型路由；先让 Agent 在群里完成一次回复')
     const group = this.db.groupById(groupId)
     if (!group) throw new Error('群不存在')
     const messages = this.db.unreflectedMessages(groupId, this.config.reflectionMaxMessages)
-    if (messages.length === 0) return this.memoryView(groupId)
+    if (messages.length === 0) {
+      const view = this.memoryView(groupId)
+      if (!view) throw new Error('群不存在')
+      return view
+    }
 
     const members = this.db.listGroupMembers(groupId)
     const currentGroup = this.db.memoryDocs('group', groupId)
-    const memberMemory = Object.fromEntries(members.map(member => [member.platform_user_id, this.db.memoryDocs('member', Number(member.id))]))
+    const memberMemory = Object.fromEntries(
+      members.map(member => [member.platform_user_id, this.db.memoryDocs('member', Number(member.id))]),
+    )
     const transcript = messages.map(message => ({
       id: Number(message.id),
       at: message.created_at,
@@ -77,8 +99,7 @@ export class MemoryEngine {
       messages: [request],
       system,
       maxTokens: this.config.memoryMaxTokens,
-      sessionId: route.sessionId || `qqchat-memory-${groupId}`,
-      purpose: 'qqchat-memory-reflection',
+      sessionId: SessionId(route.sessionId || `qqchat-memory-${groupId}`),
     })) assembler.push(chunk)
     const text = assembler.blocks()
       .filter(block => block.type === 'text')
@@ -86,23 +107,26 @@ export class MemoryEngine {
       .join('\n')
     const reflected = parseJsonObject(text)
     this.applyReflection(groupId, members, reflected)
-    this.db.markReflected(groupId, Number(messages.at(-1).id))
-    return this.memoryView(groupId)
+    const lastMessage = messages.at(-1)
+    if (lastMessage) this.db.markReflected(groupId, Number(lastMessage.id))
+    const view = this.memoryView(groupId)
+    if (!view) throw new Error('群不存在')
+    return view
   }
 
-  applyReflection(groupId, members, reflected) {
+  private applyReflection(groupId: number, members: GroupMemberRow[], reflected: ReflectionPayload): void {
     const group = reflected.group || {}
     if (group.profile !== undefined) this.db.setMemoryDoc('group', groupId, 'profile', stringifyDoc(group.profile))
     if (group.summary !== undefined) this.db.setMemoryDoc('group', groupId, 'summary', stringifyDoc(group.summary))
     if (group.memory !== undefined) this.db.setMemoryDoc('group', groupId, 'memory', stringifyMemory(group.memory))
-    if (group.daily !== undefined && String(stringifyDoc(group.daily)).trim()) {
+    if (group.daily !== undefined && stringifyDoc(group.daily).trim()) {
       const stamp = new Date().toISOString().slice(0, 10)
       this.db.appendMemoryDoc('group', groupId, 'daily', `\n## ${stamp}\n${stringifyDoc(group.daily)}`)
     }
     const byOpenid = new Map(members.map(member => [member.platform_user_id, Number(member.id)]))
     const updates = Array.isArray(reflected.members) ? reflected.members : []
     for (const update of updates) {
-      const memberId = byOpenid.get(String(update?.senderId || ''))
+      const memberId = byOpenid.get(String(update.senderId || ''))
       if (!memberId) continue
       if (update.profile !== undefined) this.db.setMemoryDoc('member', memberId, 'profile', stringifyDoc(update.profile))
       if (update.pattern !== undefined) this.db.setMemoryDoc('member', memberId, 'pattern', stringifyDoc(update.pattern))
@@ -110,7 +134,7 @@ export class MemoryEngine {
     }
   }
 
-  contextForGroup(group, currentMember) {
+  contextForGroup(group: GroupRow, currentMember?: { id: number; platform_user_id: string; display_name: string | null }): string {
     const history = this.db.recentGroupMessages(Number(group.id), this.config.recentGroupMessages)
     const groupDocs = this.db.memoryDocs('group', Number(group.id))
     const memberDocs = currentMember ? this.db.memoryDocs('member', Number(currentMember.id)) : {}
@@ -137,7 +161,7 @@ export class MemoryEngine {
     ].filter(Boolean).join('\n')
   }
 
-  contextForMember(member) {
+  contextForMember(member: { id: number; platform_user_id: string; display_name: string | null }): string {
     const docs = this.db.memoryDocs('member', Number(member.id))
     return [
       '[QQ 私聊成员上下文]',
@@ -150,12 +174,12 @@ export class MemoryEngine {
     ].filter(Boolean).join('\n')
   }
 
-  currentMessageText(message) {
+  currentMessageText(message: QQNormalizedMessage): string {
     return [
       message.chatType === 'group' ? '[当前 QQ 群消息；以下身份字段是可靠元数据]' : '[当前 QQ 私聊消息；以下身份字段是可靠元数据]',
       `发言人ID=${message.senderId}`,
       `显示名=${message.senderName || ''}`,
-      message.chatType === 'group' ? `群ID=${message.groupOpenid}` : '',
+      message.chatType === 'group' ? `群ID=${message.groupOpenid || ''}` : '',
       `是否@机器人=${message.mentioned ? '是' : '否'}`,
       message.quotedText ? `引用=${message.quotedText}` : '',
       '正文：',
@@ -163,7 +187,7 @@ export class MemoryEngine {
     ].filter(Boolean).join('\n')
   }
 
-  memoryView(groupId) {
+  memoryView(groupId: number): MemoryView | undefined {
     const group = this.db.groupById(Number(groupId))
     if (!group) return undefined
     const members = this.db.listGroupMembers(Number(groupId)).map(member => ({
@@ -174,7 +198,7 @@ export class MemoryEngine {
   }
 }
 
-function memorySystemPrompt() {
+function memorySystemPrompt(): string {
   return `你负责整理一个 QQ 群的长期记忆。目标是稳定、克制、可追溯地维护群 scope 与成员 scope，规则：
 1. senderId 是唯一可靠身份，不根据昵称猜身份；不同 senderId 的个人事实绝不能混写。
 2. 群 scope 只写群级角色、关系、共同决定、长期话题、群内约定；个人稳定信息写到对应 member。
@@ -187,23 +211,35 @@ function memorySystemPrompt() {
 没有变化的成员可省略；不要为 BOT 创建成员记忆。`
 }
 
-function parseJsonObject(text) {
+function parseJsonObject(text: string): ReflectionPayload {
   const trimmed = String(text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
-  try { return JSON.parse(trimmed) } catch {}
+  try { return JSON.parse(trimmed) as ReflectionPayload } catch {}
   const start = trimmed.indexOf('{')
   const end = trimmed.lastIndexOf('}')
-  if (start >= 0 && end > start) return JSON.parse(trimmed.slice(start, end + 1))
+  if (start >= 0 && end > start) return JSON.parse(trimmed.slice(start, end + 1)) as ReflectionPayload
   throw new Error('记忆反思模型没有返回有效 JSON')
 }
 
-function stringifyDoc(value) {
-  return typeof value === 'string' ? value : JSON.stringify(value, null, 2)
+function stringifyDoc(value: unknown): string {
+  if (typeof value === 'string') return value
+  return JSON.stringify(value, null, 2) ?? ''
 }
-function stringifyMemory(value) {
-  if (Array.isArray(value)) return value.map(item => `- ${typeof item === 'string' ? item : JSON.stringify(item)}`).join('\n')
+
+function stringifyMemory(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map(item => `- ${typeof item === 'string' ? item : JSON.stringify(item)}`).join('\n')
+  }
   return stringifyDoc(value)
 }
-function pickDocs(docs) {
-  return Object.fromEntries(DOCS.filter(key => docs[key]).map(key => [key, docs[key]]))
+
+function pickDocs(docs: MemoryDocuments): MemoryDocuments {
+  return Object.fromEntries(DOCS.filter(key => docs[key]).map(key => [key, docs[key]])) as MemoryDocuments
 }
-function section(title, content) { return content ? `[${title}]\n${content}` : '' }
+
+function section(title: string, content: string | undefined): string {
+  return content ? `[${title}]\n${content}` : ''
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}

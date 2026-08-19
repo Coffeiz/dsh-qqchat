@@ -1,7 +1,7 @@
 import { createDecipheriv } from 'node:crypto'
 
 /** QQ bind_task returns base64(iv[12] + ciphertext + gcmTag[16]). */
-export function decryptQQSecret(encryptedBase64, keyBase64) {
+export function decryptQQSecret(encryptedBase64: string, keyBase64: string): string {
   const key = Buffer.from(keyBase64, 'base64')
   const raw = Buffer.from(encryptedBase64, 'base64')
   if (key.length !== 32) throw new Error('QQ bind AES key must be 32 bytes')

@@ -1,36 +1,45 @@
+import type { Context } from '@deepseek-ai/cordis'
+import type { DshQQBridge } from './agent-bridge.js'
+import type { QQChatDatabase } from './db.js'
+import type { MemoryEngine } from './memory.js'
+import type { QQApiClient } from './qq-api.js'
+import type { QQBindService } from './qq-auth.js'
 import { QQGateway } from './qq-gateway.js'
+import type { AccountRow, LoggerLike, QQChatConfig, QQNormalizedMessage } from './types.js'
 
 export class QQChatRuntime {
-  constructor(ctx, db, api, auth, memory, bridge, config, logger = console) {
-    this.ctx = ctx
-    this.db = db
-    this.api = api
-    this.auth = auth
-    this.memory = memory
-    this.bridge = bridge
-    this.config = config
-    this.logger = logger
-    this.gateways = new Map()
-    this.outboxTimer = undefined
-  }
+  readonly gateways = new Map<number, QQGateway>()
+  private outboxTimer?: ReturnType<typeof setInterval>
 
-  async start() {
+  constructor(
+    readonly ctx: Context,
+    readonly db: QQChatDatabase,
+    readonly api: QQApiClient,
+    readonly auth: QQBindService,
+    readonly memory: MemoryEngine,
+    readonly bridge: DshQQBridge,
+    readonly config: QQChatConfig,
+    readonly logger: LoggerLike = console,
+  ) {}
+
+  async start(): Promise<void> {
     for (const account of this.db.enabledAccounts()) this.startGateway(account)
     this.outboxTimer = setInterval(() => void this.flushOutbox(), 3000)
     this.outboxTimer.unref?.()
   }
 
-  async stop() {
+  async stop(): Promise<void> {
     if (this.outboxTimer) clearInterval(this.outboxTimer)
     this.outboxTimer = undefined
-    await Promise.all([...this.gateways.values()].map(gateway => gateway.stop().catch(() => {})))
+    await Promise.all([...this.gateways.values()].map(gateway => gateway.stop().catch(() => undefined)))
     this.gateways.clear()
     await this.bridge.dispose()
     this.memory.dispose()
     this.db.close()
   }
 
-  startGateway(account) {
+  startGateway(account: AccountRow | undefined): void {
+    if (!account) return
     const id = Number(account.id)
     if (this.gateways.has(id)) return
     const gateway = new QQGateway(account, this.db, this.api, message => this.onIncoming(message), this.logger)
@@ -38,7 +47,7 @@ export class QQChatRuntime {
     gateway.start()
   }
 
-  async restartGateway(accountId) {
+  async restartGateway(accountId: number): Promise<void> {
     const existing = this.gateways.get(Number(accountId))
     if (existing) await existing.stop()
     this.gateways.delete(Number(accountId))
@@ -46,15 +55,15 @@ export class QQChatRuntime {
     if (account?.enabled) this.startGateway(account)
   }
 
-  async onIncoming(message) {
+  private async onIncoming(message: QQNormalizedMessage): Promise<void> {
     const account = this.db.accountById(message.accountId)
     if (!account || !account.enabled) return
     const member = this.db.upsertMember(message.accountId, message.senderId, message.senderName)
-    let group
+    let group = undefined
     let shouldReply = true
     let shouldRecord = true
     if (message.chatType === 'group') {
-      if (!this.config.groupChatEnabled) return
+      if (!this.config.groupChatEnabled || !message.groupOpenid) return
       group = this.db.upsertGroup(message.accountId, message.groupOpenid, {
         enabled: true,
         requiresAt: this.config.groupRequiresAt,
@@ -83,11 +92,16 @@ export class QQChatRuntime {
 
     try {
       const reply = await this.bridge.reply(message, group, member)
-      await this.api.sendReplyWithActiveFallback(account, message.chatType === 'group' ? message.groupOpenid : message.senderId, reply, {
-        group: message.chatType === 'group',
-        messageId: message.messageId || null,
-        format: this.config.replyFormat,
-      })
+      await this.api.sendReplyWithActiveFallback(
+        account,
+        message.chatType === 'group' ? message.groupOpenid! : message.senderId,
+        reply,
+        {
+          group: message.chatType === 'group',
+          messageId: message.messageId || null,
+          format: this.config.replyFormat,
+        },
+      )
       this.db.insertMessage({
         accountId: message.accountId,
         chatType: message.chatType,
@@ -102,22 +116,36 @@ export class QQChatRuntime {
     }
   }
 
-  async sendActiveGroup(groupId, content) {
+  async sendActiveGroup(groupId: number, content: string): Promise<void> {
     const group = this.db.groupById(Number(groupId))
     if (!group) throw new Error('群不存在')
     const account = this.db.accountById(Number(group.account_id))
     if (!account) throw new Error('QQ 账号不存在')
-    await this.api.sendText(account, group.platform_group_id, content, { group: true, messageId: null, format: this.config.replyFormat })
-    this.db.insertMessage({ accountId: Number(account.id), chatType: 'group', groupId: Number(group.id), direction: 'outbound', content })
+    await this.api.sendText(account, group.platform_group_id, content, {
+      group: true,
+      messageId: null,
+      format: this.config.replyFormat,
+    })
+    this.db.insertMessage({
+      accountId: Number(account.id),
+      chatType: 'group',
+      groupId: Number(group.id),
+      direction: 'outbound',
+      content,
+    })
     this.memory.schedule(Number(group.id))
   }
 
-  async flushOutbox() {
+  private async flushOutbox(): Promise<void> {
     for (const item of this.db.dueOutbox()) {
       try {
         const account = this.db.accountById(Number(item.account_id))
         if (!account) throw new Error('QQ account missing')
-        await this.api.sendText(account, item.target_id, item.content, { group: item.chat_type === 'group', messageId: null, format: this.config.replyFormat })
+        await this.api.sendText(account, item.target_id, item.content, {
+          group: item.chat_type === 'group',
+          messageId: null,
+          format: this.config.replyFormat,
+        })
         this.db.finishOutbox(Number(item.id))
       } catch (error) {
         this.db.finishOutbox(Number(item.id), error instanceof Error ? error.message : String(error))

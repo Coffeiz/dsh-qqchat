@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { QQChatDatabase } from '../src/db.js'
 
-function withDb(fn) {
+function withDb<T>(fn: (db: QQChatDatabase) => T): T {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-qqchat-'))
   const db = new QQChatDatabase(join(dir, 'qqchat.sqlite'))
   try { return fn(db) } finally { db.close(); rmSync(dir, { recursive: true, force: true }) }
@@ -21,8 +21,8 @@ test('SQLite keeps group/member identity and deduplicates platform messages', ()
   assert.equal(first, second)
   const rows = db.listMessages(Number(group.id))
   assert.equal(rows.length, 1)
-  assert.equal(rows[0].platform_user_id, 'user-openid')
-  assert.equal(db.listGroupMembers(Number(group.id))[0].display_name, '群昵称')
+  assert.equal(rows[0]?.platform_user_id, 'user-openid')
+  assert.equal(db.listGroupMembers(Number(group.id))[0]?.display_name, '群昵称')
 }))
 
 test('memory documents preserve separate group and member scopes', () => withDb(db => {
