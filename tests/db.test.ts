@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { QQChatDatabase } from '../src/db.js'
+import { QQChatDatabase } from '../src/storage/db.js'
 
 function withDb<T>(fn: (db: QQChatDatabase) => T): T {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-qqchat-'))
@@ -60,6 +60,7 @@ test('memory documents preserve separate group and member scopes', () => withDb(
 
 test('runtime settings persist independently from static config defaults', () => withDb(db => {
   const defaults = {
+    memoryEnabled: true,
     groupReceiveMode: 'mention' as const,
     groupReplyFormat: 'smart' as const,
     directReplyFormat: 'smart' as const,
@@ -71,7 +72,9 @@ test('runtime settings persist independently from static config defaults', () =>
   db.setSetting('groupReplyFormat', 'compat')
   db.setSetting('groupMembersCanUseTools', true)
   db.setSetting('ownerUserId', 'owner-openid')
+  db.setSetting('memoryEnabled', false)
   assert.deepEqual(db.runtimeSettings(defaults), {
+    memoryEnabled: false,
     groupReceiveMode: 'silent',
     groupReplyFormat: 'compat',
     directReplyFormat: 'smart',

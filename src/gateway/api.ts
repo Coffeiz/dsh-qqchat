@@ -1,4 +1,4 @@
-import type { QQChatDatabase } from './db.js'
+import type { QQChatDatabase } from '../storage/db.js'
 import type {
   AccountRow,
   QQAccessTokenPayload,
@@ -6,7 +6,7 @@ import type {
   QQGatewayPayload,
   QQSendOptions,
   ReplyFormat,
-} from './types.js'
+} from '../types.js'
 
 const API_BASE = 'https://api.sgroup.qq.com'
 const SANDBOX_API_BASE = 'https://sandbox.api.sgroup.qq.com'

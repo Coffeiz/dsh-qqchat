@@ -1,8 +1,8 @@
 import { randomBytes } from 'node:crypto'
 import QRCode from 'qrcode'
 import { decryptQQSecret } from './crypto.js'
-import type { QQChatDatabase } from './db.js'
-import type { AccountRow, QQBindCreatePayload, QQBindPollPayload, QQChatConfig } from './types.js'
+import type { QQChatDatabase } from '../storage/db.js'
+import type { AccountRow, QQBindCreatePayload, QQBindPollPayload, QQChatConfig } from '../types.js'
 
 const CREATE_URL = 'https://q.qq.com/lite/create_bind_task'
 const POLL_URL = 'https://q.qq.com/lite/poll_bind_result'

@@ -191,7 +191,9 @@ outbox
 
 ### 3. Model surface
 
-模型只看到 DSH 正常 surface 以及插件明确注入的 context snapshot。
+模型只看到 DSH 正常 surface 以及插件明确注入的 context snapshot。QQChat 的
+记忆快照使用 DSH 官方 `@deepseek-ai/dsh-system-prompt` runtime-context 来源，
+由 DSH 的 projection 机制替换旧快照，避免每轮重复追加完整记忆消息。
 
 完整群聊不会因为存在 SQLite 或 QQ UI transcript 就自动进入模型 history。
 
@@ -257,7 +259,7 @@ recent group history
 + stable sender/group metadata
 ```
 
-当前 QQ 消息本身以正常 user prompt 进入 turn；可靠身份信息则由 source metadata 和 context snapshot 提供。
+当前 QQ 消息本身以正常 user prompt 进入 turn；可靠身份信息则由 source metadata 和 context snapshot 提供。私聊快照包含 member 的 profile、pattern、summary、daily 和 memory；群聊快照包含群级文档、当前成员文档和近期群聊记录。
 
 ## 工具权限
 
@@ -385,7 +387,14 @@ DSH Session persistence
 ## TypeScript 构建
 
 ```text
-src/*.ts
+src/
+  index.ts / config.ts / types.ts
+  commands/     DSH 原生命令的 QQ 分发适配
+  gateway/       QQ API、授权、Gateway、消息解析
+  session/       Agent bridge、Session runtime
+  transport/     DSH RPC
+  storage/       SQLite、记忆
+  shared/        日志、DSH 类型扩展
 client-src/*.cts
 tests/*.test.ts
 ```

@@ -1,7 +1,7 @@
 import { normalizeQQDispatch } from './normalize.js'
-import type { QQApiClient } from './qq-api.js'
-import type { QQChatDatabase } from './db.js'
-import type { AccountRow, LoggerLike, QQDispatchData, QQGatewayFrame, QQNormalizedMessage } from './types.js'
+import type { QQApiClient } from './api.js'
+import type { QQChatDatabase } from '../storage/db.js'
+import type { AccountRow, LoggerLike, QQDispatchData, QQGatewayFrame, QQNormalizedMessage } from '../types.js'
 
 const OP = {
   DISPATCH: 0,

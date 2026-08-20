@@ -1,16 +1,19 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
-import type { AgentHandle, AgentOptions, AgentSetup, PreStepDecision as AgentPreStepDecision } from '@deepseek-ai/dsh-agent'
+import { installModelSelection } from '@deepseek-ai/dsh-agent'
+import type { AgentHandle, AgentOptions, AgentSetup, ModelSelectionRef, PreStepDecision as AgentPreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { CommandInvocation, CommandRuntime, CommandResult } from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import type { PreToolDecision } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-tools'
-import './dsh-augmentations.js'
-import { defaultRuntimeSettings } from './config.js'
-import type { QQChatDatabase } from './db.js'
-import type { MemoryEngine } from './memory.js'
+import '../shared/augmentations.js'
+import { defaultRuntimeSettings } from '../config.js'
+import { dispatchQQCommand, qqCommandText } from '../commands/dispatch.js'
+import type { QQChatDatabase } from '../storage/db.js'
+import type { MemoryEngine } from '../storage/memory.js'
 import type {
   ChatType,
   GroupRow,
@@ -20,7 +23,9 @@ import type {
   QQChatConfig,
   QQChatDisplayEvent,
   QQNormalizedMessage,
-} from './types.js'
+} from '../types.js'
+
+const DSH_RUNTIME_CONTEXT_SOURCE = '@deepseek-ai/dsh-system-prompt'
 
 interface AgentPreset { id: string }
 interface AgentPresetService { resolve(id?: string): Promise<AgentPreset>; mount(ctx: Context, id: string): Promise<unknown> }
@@ -34,10 +39,13 @@ export class DshQQBridge {
   private readonly locks = new Map<string, Promise<unknown>>()
   private readonly pending = new Map<string, PendingReply>()
   private readonly routes = new Map<string, { provider: string; model: string }>()
+  private readonly selections = new Map<string, { ref: ModelSelectionRef; dispose: () => void }>()
+  private readonly pendingResets = new Set<string>()
   private readonly activeActors = new Map<string, ActiveActor>()
   private readonly disposeEvent: () => void
   private readonly disposeToolGate: () => void
   private readonly disposeBootstrapGate: () => void
+  private readonly disposeCommands: () => void
 
   constructor(
     private readonly ctx: Context,
@@ -66,16 +74,21 @@ export class DshQQBridge {
           : '当前 QQ 群已关闭群成员工具权限，但尚未设置 Owner stable ID。',
       }
     })
+    this.disposeCommands = this.registerCommands()
   }
 
   async dispose(): Promise<void> {
     this.disposeEvent()
     this.disposeBootstrapGate()
     this.disposeToolGate()
+    this.disposeCommands()
     for (const handle of this.handles.values()) {
       try { await handle.dispose() } catch {}
     }
     this.handles.clear()
+    for (const selection of this.selections.values()) selection.dispose()
+    this.selections.clear()
+    this.pendingResets.clear()
     this.activeActors.clear()
   }
 
@@ -102,15 +115,33 @@ export class DshQQBridge {
     return this.serial(key, async () => {
       const row = message.chatType === 'group' ? group! : member
       const { agent, sessionId } = await this.ensureAgent(message.chatType, row)
+      this.activeActors.set(String(sessionId), { chatType: message.chatType, senderId: message.senderId })
+      try {
+        const commands = (this.ctx as unknown as { commands?: CommandRuntime }).commands
+        const commandText = qqCommandText(message.text, message.mentioned)
+        if (commandText !== undefined) {
+          if (!commands) return '当前 DSH profile 未加载命令系统，请重启并确认使用了最新插件。'
+          const command = await dispatchQQCommand(commands, agent, commandText)
+          if (command.handled) {
+            if (this.pendingResets.delete(String(sessionId))) await this.resetSession(message.chatType, row)
+            return command.text || ''
+          }
+        }
+      } finally {
+        this.activeActors.delete(String(sessionId))
+      }
+
       await agent.whenIdle()
 
-      const contextText = message.chatType === 'group'
-        ? this.memory.contextForGroup(group!, member, message.messageId || undefined)
-        : this.memory.contextForMember(member)
-      agent.inject(createUserMessage({
-        source: { kind: 'plugin', plugin: 'dsh-qqchat', form: 'snapshot', sections: [{ name: 'qq-chat-context', text: contextText }] },
-        content: [{ type: 'text', text: contextText }],
-      }))
+      if (this.db.runtimeSettings(defaultRuntimeSettings(this.config)).memoryEnabled) {
+        const contextText = message.chatType === 'group'
+          ? this.memory.contextForGroup(group!, member, message.messageId || undefined)
+          : this.memory.contextForMember(member)
+        agent.inject(createUserMessage({
+          source: { kind: 'plugin', plugin: DSH_RUNTIME_CONTEXT_SOURCE, form: 'snapshot', sections: [{ name: 'qq-chat-context', text: contextText }] },
+          content: [{ type: 'text', text: contextText }],
+        }))
+      }
 
       const current = createUserMessage({
         source: {
@@ -178,6 +209,7 @@ export class DshQQBridge {
     if (sessionId) {
       const live = this.ctx.agents.get(SessionId(sessionId))
       if (live) {
+        this.ensureSelection(live)
         this.ensureTitle(live.session, chatType, row)
         this.rememberRoute(chatType, row, live, sessionId)
         await this.ensureVisible(live)
@@ -185,6 +217,7 @@ export class DshQQBridge {
       }
       const resumed = await this.tryResume(sessionId)
       if (resumed) {
+        this.ensureSelection(resumed.agent)
         this.ensureTitle(resumed.agent.session, chatType, row)
         this.rememberRoute(chatType, row, resumed.agent, sessionId)
         await this.ensureVisible(resumed.agent)
@@ -203,6 +236,7 @@ export class DshQQBridge {
       agentOptions: this.agentOptions(), setup: composition.setup,
     })
     this.handles.set(sessionId, handle)
+    this.ensureSelection(handle.agent)
     this.db.setChatSession(chatType, Number(row.id), sessionId)
     this.ensureTitle(handle.agent.session, chatType, row)
     this.rememberRoute(chatType, row, handle.agent, sessionId)
@@ -290,6 +324,130 @@ export class DshQQBridge {
     }
     if (this.config.maxTokens) options.maxTokens = this.config.maxTokens
     return options
+  }
+
+  private ensureSelection(agent: AgentHandle['agent']): ModelSelectionRef | undefined {
+    const id = String(agent.id)
+    const existing = this.selections.get(id)
+    if (existing) return existing.ref
+    const logged = agent.session.requestHeader()?.config
+    const route = this.routes.get(id)
+      || (logged?.provider && logged.model ? { provider: logged.provider, model: logged.model } : undefined)
+      || (agent.options.provider && agent.options.model ? { provider: agent.options.provider, model: agent.options.model } : undefined)
+    if (!route) return undefined
+    const ref: ModelSelectionRef = { current: route, assembled: undefined }
+    this.selections.set(id, { ref, dispose: installModelSelection(agent.ctx, ref) })
+    return ref
+  }
+
+  private selection(agent: AgentHandle['agent']): ModelSelectionRef | undefined {
+    return this.ensureSelection(agent)
+  }
+
+  private requestReset(sessionId: string): void {
+    this.pendingResets.add(sessionId)
+  }
+
+  private async resetSession(chatType: ChatType, row: GroupRow | MemberRow): Promise<void> {
+    const sessionId = this.db.getChatSession(chatType, Number(row.id))
+    if (!sessionId) return
+    const handle = this.handles.get(sessionId)
+    if (handle) {
+      try { await handle.dispose() } catch {}
+      this.handles.delete(sessionId)
+    }
+    const selection = this.selections.get(sessionId)
+    if (selection) {
+      selection.dispose()
+      this.selections.delete(sessionId)
+    }
+    this.routes.delete(sessionId)
+    this.db.setChatSession(chatType, Number(row.id), '')
+  }
+
+  private commandHelp(agent: AgentHandle['agent']): string {
+    const commands = this.ctx.commands.list(agent)
+    return [
+      '🤖 QQChat / DSH 命令',
+      '',
+      '通用能力',
+      ...commands.filter(command => ['compact', 'goal', 'plan', 'permission', 'feedback'].includes(command.name))
+        .map(command => `/${command.name}${command.input?.hint ? ` ${command.input.hint}` : ''} — ${command.description}`),
+      '',
+      'QQChat 会话',
+      ...commands.filter(command => ['new', 'reset', 'clear', 'model', 'stop', 'status'].includes(command.name))
+        .map(command => `/${command.name}${command.input?.hint ? ` ${command.input.hint}` : ''} — ${command.description}`),
+      '',
+      'QQChat 工具',
+      ...commands.filter(command => ['ping', 'version', 'help', 'commands'].includes(command.name))
+        .map(command => `/${command.name} — ${command.description}`),
+    ].join('\n')
+  }
+
+  private commandResult(handler: (invocation: CommandInvocation) => CommandResult | Promise<CommandResult>): CommandResult {
+    return handler as unknown as CommandResult
+  }
+
+  private registerCommands(): () => void {
+    const register = (name: string, description: string, handler: (invocation: CommandInvocation) => CommandResult | Promise<CommandResult>, input?: string): (() => void) =>
+      this.ctx.commands.register({ name, description, ...(input ? { input: { hint: input } } : {}), handler })
+    const disposers = [
+      register('help', '查看 QQChat 和 DSH 命令', invocation => ({ kind: 'success', text: this.commandHelp(invocation.agent as AgentHandle['agent']) })),
+      register('commands', '查看 QQChat 和 DSH 命令', invocation => ({ kind: 'success', text: this.commandHelp(invocation.agent as AgentHandle['agent']) })),
+      register('new', '开始新会话（保留旧 Session）', invocation => { this.requestReset(String(invocation.agent.id)); return { kind: 'success', text: '已开启新会话，下一条消息将进入新的 Session。' } }),
+      register('reset', '开始新会话（/new 别名）', invocation => { this.requestReset(String(invocation.agent.id)); return { kind: 'success', text: '已开启新会话，下一条消息将进入新的 Session。' } }),
+      register('clear', '开始新会话（/new 别名）', invocation => { this.requestReset(String(invocation.agent.id)); return { kind: 'success', text: '已开启新会话，下一条消息将进入新的 Session。' } }),
+      register('model', '查看或切换当前会话模型', invocation => this.modelCommand(invocation), '[provider/]model'),
+      register('stop', '中止当前生成', invocation => {
+        if (invocation.agent.status !== 'running') return { kind: 'success', text: '当前没有进行中的生成。' }
+        invocation.agent.cancel({ kind: 'user' })
+        return { kind: 'success', text: '已中止当前生成。' }
+      }),
+      register('ping', '测试 QQChat 连通性', () => ({ kind: 'success', text: 'pong 🏓' })),
+      register('version', '查看 QQChat 版本', () => ({ kind: 'success', text: `dsh-qqchat v${this.config.source === 'dsh-qqchat' ? '0.1.0-alpha.1' : this.config.source}` })),
+      register('status', '查看当前会话状态', invocation => this.statusCommand(invocation.agent as AgentHandle['agent'])),
+    ]
+    return () => { for (const dispose of disposers.reverse()) dispose() }
+  }
+
+  private async modelCommand(invocation: CommandInvocation): Promise<CommandResult> {
+    const agent = invocation.agent as AgentHandle['agent']
+    const ref = this.selection(agent)
+    if (!ref) return { kind: 'error', text: '当前 Session 尚未确定模型路由。' }
+    const args = invocation.rawInput.trim()
+    if (!args) {
+      const providers = this.ctx.llm.listProviders()
+      const models = await this.ctx.llm.listModels(ref.current?.provider || '')
+      return {
+        kind: 'success',
+        text: [
+          `当前模型：${ref.current?.provider}/${ref.current?.model}`,
+          providers.length ? `可用提供方：${providers.map(provider => provider.id).join(', ')}` : '',
+          models.length ? `当前提供方模型：${models.slice(0, 20).map(model => `${model.id}${model.name !== model.id ? `（${model.name}）` : ''}`).join(', ')}` : '',
+          '切换用法：/model provider/model 或 /model model',
+        ].filter(Boolean).join('\n'),
+      }
+    }
+    const separator = args.indexOf('/')
+    const provider = separator > 0 ? args.slice(0, separator).trim() : ref.current?.provider || ''
+    const model = separator > 0 ? args.slice(separator + 1).trim() : args
+    if (!provider || !model) return { kind: 'error', text: '用法：/model provider/model' }
+    if (!this.ctx.llm.listProviders().some(item => item.id === provider)) {
+      return { kind: 'error', text: `未找到提供方：${provider}` }
+    }
+    ref.current = { provider, model }
+    this.routes.set(String(agent.id), { provider, model })
+    return { kind: 'success', text: `模型已切换：${provider}/${model}\n对话上下文保留，下一轮生效。` }
+  }
+
+  private statusCommand(agent: AgentHandle['agent']): CommandResult {
+    const current = this.selection(agent)?.current
+    const messages = agent.session.events.filter(event => event.type === 'user/message' || event.type === 'assistant/message').length
+    const last = agent.session.events.at(-1)
+    return {
+      kind: 'success',
+      text: ['📊 Session 状态', `Session：${String(agent.id)}`, `状态：${agent.status === 'running' ? '生成中' : '空闲'}`, `模型：${current ? `${current.provider}/${current.model}` : '未知'}`, `消息数：${messages}`, `最后事件：${last?.type || '无'}`].join('\n'),
+    }
   }
 
   private async composition(): Promise<Composition> {

@@ -1,4 +1,4 @@
-import type { LogLevel, LoggerLike, PluginLogEntry } from './types.js'
+import type { LogLevel, LoggerLike, PluginLogEntry } from '../types.js'
 
 export class QQChatLogger implements LoggerLike {
   private nextId = 1

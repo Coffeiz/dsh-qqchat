@@ -1,6 +1,6 @@
 import type {} from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-session'
-import type { QQChatDisplayEvent } from './types.js'
+import type { QQChatDisplayEvent } from '../types.js'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {

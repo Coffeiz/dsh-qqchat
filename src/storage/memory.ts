@@ -18,7 +18,7 @@ import type {
   ProfileEntry,
   ProfileEntryType,
   QQNormalizedMessage,
-} from './types.js'
+} from '../types.js'
 
 const DOCS = ['profile', 'summary', 'daily', 'memory', 'pattern'] as const satisfies readonly MemoryDocType[]
 
@@ -321,6 +321,7 @@ export class MemoryEngine {
       section('成员画像', docs.profile),
       section('行为模式', docs.pattern),
       section('成员摘要', docs.summary),
+      section('成员近期沉淀', docs.daily),
       section('成员长期记忆', docs.memory),
     ].filter(Boolean).join('\n')
   }

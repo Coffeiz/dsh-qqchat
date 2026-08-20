@@ -1,4 +1,4 @@
-import type { QQAuthor, QQDispatchData, QQNormalizedMessage } from './types.js'
+import type { QQAuthor, QQDispatchData, QQNormalizedMessage } from '../types.js'
 
 function authorId(author: QQAuthor = {}): string {
   return String(author.user_openid || author.member_openid || author.id || '')

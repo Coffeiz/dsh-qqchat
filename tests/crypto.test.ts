@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomBytes, createCipheriv } from 'node:crypto'
-import { decryptQQSecret } from '../src/crypto.js'
+import { decryptQQSecret } from '../src/gateway/crypto.js'
 
 test('decryptQQSecret matches QQ bind_task AES-256-GCM framing', () => {
   const key = randomBytes(32)

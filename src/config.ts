@@ -49,6 +49,7 @@ export function defaultRuntimeSettings(config: QQChatConfig): QQChatRuntimeSetti
     ? 'silent'
     : config.groupRequiresAt ? 'mention' : 'auto'
   return {
+    memoryEnabled: true,
     groupReceiveMode,
     groupReplyFormat: 'compat',
     directReplyFormat: config.replyFormat,

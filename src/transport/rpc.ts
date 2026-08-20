@@ -1,5 +1,5 @@
 import type { ConnectionRpcHandler } from '@deepseek-ai/dsh-client-connection'
-import type { QQChatRuntime } from './runtime.js'
+import type { QQChatRuntime } from '../session/runtime.js'
 import type {
   ChatType,
   GroupListRow,
@@ -9,7 +9,7 @@ import type {
   MessageRow,
   PublicAccountRow,
   QQChatRuntimeSettingsPatch,
-} from './types.js'
+} from '../types.js'
 
 type RpcSuccess<T> = { ok: true; value: T }
 type RpcFailure = { ok: false; error: { code: 'internal'; message: string; details: Record<string, never> } }
@@ -170,6 +170,7 @@ export function createQQChatRpc(runtime: QQChatRuntime): ConnectionRpcHandler {
           return ok({ sessionId: await runtime.sendActive('group', id, content) })
         }
         case 'group/reflect': {
+          if (!runtime.settings().memoryEnabled) throw new Error('记忆系统已关闭，请先在设置中重新启用')
           const id = requireNumber(payload, 'groupId')
           const view = await runtime.memory.reflectNow(id)
           return ok({ groupMemory: normalizeMemory(view.groupMemory) })
@@ -267,6 +268,7 @@ function asSettingsPatch(value: unknown): QQChatRuntimeSettingsPatch {
   const record = asRecord(value)
   if (!record) return {}
   const patch: QQChatRuntimeSettingsPatch = {}
+  if (typeof record.memoryEnabled === 'boolean') patch.memoryEnabled = record.memoryEnabled
   if (record.groupReceiveMode === 'auto' || record.groupReceiveMode === 'mention' || record.groupReceiveMode === 'silent') {
     patch.groupReceiveMode = record.groupReceiveMode
   }

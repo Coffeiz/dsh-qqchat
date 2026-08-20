@@ -2,20 +2,21 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
+import type {} from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-client-connection'
-import { DshQQBridge } from './agent-bridge.js'
+import { DshQQBridge } from './session/agent-bridge.js'
 import { resolveConfig } from './config.js'
-import { QQChatDatabase } from './db.js'
-import { QQChatLogger } from './logging.js'
-import { MemoryEngine } from './memory.js'
-import { QQApiClient } from './qq-api.js'
-import { QQBindService } from './qq-auth.js'
-import { createQQChatRpc } from './rpc.js'
-import { QQChatRuntime } from './runtime.js'
+import { QQChatDatabase } from './storage/db.js'
+import { QQChatLogger } from './shared/logging.js'
+import { MemoryEngine } from './storage/memory.js'
+import { QQApiClient } from './gateway/api.js'
+import { QQBindService } from './gateway/auth.js'
+import { createQQChatRpc } from './transport/rpc.js'
+import { QQChatRuntime } from './session/runtime.js'
 import type { LoggerLike, QQChatConfigInput } from './types.js'
 
 export const name = 'dsh-qqchat'
-export const inject = ['connection', 'agents', 'agentDefaultModel', 'llm', 'tools', 'workspaceRegistry'] as const
+export const inject = ['connection', 'agents', 'agentDefaultModel', 'commands', 'llm', 'tools', 'workspaceRegistry'] as const
 
 export function apply(ctx: Context, inputConfig: QQChatConfigInput = {}): void {
   const config = resolveConfig(inputConfig)
@@ -37,7 +38,7 @@ export function apply(ctx: Context, inputConfig: QQChatConfigInput = {}): void {
 }
 
 export type { QQChatConfig, QQChatConfigInput } from './types.js'
-export { QQChatDatabase } from './db.js'
-export { normalizeQQDispatch } from './normalize.js'
+export { QQChatDatabase } from './storage/db.js'
+export { normalizeQQDispatch } from './gateway/normalize.js'
 
 export default { name, inject, apply }

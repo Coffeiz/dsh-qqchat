@@ -132,6 +132,13 @@ export function QQSettings({ rpc }: { rpc: Rpc }) {
     h('div', { className: 'qqSetting' },
       h('div', null, h('div', { className: 'qqSettingTitle' }, '私聊消息兼容格式'), h('div', { className: 'qqSettingHelp' }, '仅控制发送到 QQ 私聊时使用的消息格式。')),
       h('div', { className: 'qqControl' }, directReplyPicker)))
+  const memoryGroup = h('div', { className: 'qqSettingsGroup' },
+    h('h3', null, '记忆系统'),
+    h('div', { className: 'qqSetting' },
+      h('div', null,
+        h('div', { className: 'qqSettingTitle' }, '启用记忆系统'),
+        h('div', { className: 'qqSettingHelp' }, '记忆会注入每轮 Agent 上下文，并在空闲时整理近期消息；这可能降低上下文缓存命中率并增加输入 token。关闭后停止记忆注入和后台整理，但不会删除已有记忆。')),
+      h('div', { className: 'qqControl' }, h(Button, { size: 'sm', variant: settings.memoryEnabled ? 'primary' : 'outline', onClick: () => void patch({ memoryEnabled: !settings.memoryEnabled }) }, settings.memoryEnabled ? '已启用' : '已关闭'))))
   const ownerSetting = !settings.groupMembersCanUseTools
     ? h('div', { className: 'qqSetting' },
       h('div', null,
@@ -156,6 +163,6 @@ export function QQSettings({ rpc }: { rpc: Rpc }) {
           h('div', { className: 'qqSettingHelp' }, settings.groupMembersCanUseTools ? '群友触发的 Agent 回合可以使用当前 preset 的全部工具。' : '关闭后只有 Owner 触发的群聊回合可以执行工具；其他群友仍可正常聊天，但工具调用会被拒绝。')))),
     ownerSetting)
   const diagnosticsGroup = h('div', { className: 'qqSettingsGroup' }, h('h3', null, '诊断'), h('div', { className: 'qqSetting' }, h('div', null, h('div', { className: 'qqSettingTitle' }, '插件日志'), h('div', { className: 'qqSettingHelp' }, account.gatewayLastError ? `最近网关错误：${account.gatewayLastError}` : '查看 QQ Gateway、授权、Agent bridge 与消息发送的最近日志。')), h(Button, { size: 'sm', variant: 'outline', onClick: () => void openLogs() }, '查看日志')))
-  return h('div', { className: 'qqs' }, head, error && h('div', { className: 'qqError' }, error), receiveGroup, toolsGroup, diagnosticsGroup,
+  return h('div', { className: 'qqs' }, head, error && h('div', { className: 'qqError' }, error), receiveGroup, memoryGroup, toolsGroup, diagnosticsGroup,
     logs && h(Modal, { title: 'QQ Chat 日志', onClose: () => setLogs(null) }, logs.length ? logs.map(log => h('div', { key: log.id, className: `qqLog ${log.level}` }, h('span', { className: 'qqLogMeta' }, `${dateTime(log.time)} [${log.level}]`), log.message)) : h('div', { className: 'qqMuted' }, '暂无日志。')))
 }

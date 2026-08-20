@@ -1,17 +1,17 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { DshQQBridge } from './agent-bridge.js'
-import { defaultRuntimeSettings } from './config.js'
-import type { QQChatDatabase } from './db.js'
-import type { QQChatLogger } from './logging.js'
-import type { MemoryEngine } from './memory.js'
-import type { QQApiClient } from './qq-api.js'
-import type { QQBindService } from './qq-auth.js'
-import { QQGateway } from './qq-gateway.js'
-import { renderQQMentionNames } from './normalize.js'
+import { defaultRuntimeSettings } from '../config.js'
+import type { QQChatDatabase } from '../storage/db.js'
+import type { QQChatLogger } from '../shared/logging.js'
+import type { MemoryEngine } from '../storage/memory.js'
+import type { QQApiClient } from '../gateway/api.js'
+import type { QQBindService } from '../gateway/auth.js'
+import { QQGateway } from '../gateway/gateway.js'
+import { renderQQMentionNames } from '../gateway/normalize.js'
 import type {
   AccountRow, ChatTargetRow, ChatType, GroupReceiveMode, GroupRow, MemberRow, QQChatConfig,
   QQChatDisplayEvent, QQChatRuntimeSettings, QQChatRuntimeSettingsPatch, QQNormalizedMessage, ReplyFormat,
-} from './types.js'
+} from '../types.js'
 
 export class QQChatRuntime {
   readonly gateways = new Map<number, QQGateway>()
@@ -43,6 +43,7 @@ export class QQChatRuntime {
   settings(): QQChatRuntimeSettings { return this.db.runtimeSettings(defaultRuntimeSettings(this.config)) }
 
   updateSettings(patch: QQChatRuntimeSettingsPatch): QQChatRuntimeSettings {
+    if (patch.memoryEnabled !== undefined) this.db.setSetting('memoryEnabled', Boolean(patch.memoryEnabled))
     if (patch.groupReceiveMode !== undefined) {
       if (!isGroupReceiveMode(patch.groupReceiveMode)) throw new Error('无效的群聊接收模式')
       this.db.setSetting('groupReceiveMode', patch.groupReceiveMode)
@@ -100,8 +101,10 @@ export class QQChatRuntime {
       messageId: `db:${messageDbId}`, chatType, chatId: targetId, direction: 'outbound', senderId: 'OWNER', senderName: 'Owner',
       content: text, quotedText: '', mentioned: false, createdAt: Date.now(),
     }, row, true)
-    if (chatType === 'group') this.memory.schedule(Number(row.id))
-    else this.memory.scheduleMember(Number(row.id))
+    if (this.settings().memoryEnabled) {
+      if (chatType === 'group') this.memory.schedule(Number(row.id))
+      else this.memory.scheduleMember(Number(row.id))
+    }
     this.logger.info?.(`[dsh-qqchat] active ${chatType} message sent to ${shortId(targetId)}`)
     if (!sessionId) throw new Error('未能建立 QQ Chat DSH session')
     return sessionId
@@ -158,12 +161,14 @@ export class QQChatRuntime {
       content: message.text,
       quotedText: message.quotedText, mentioned: message.mentioned, createdAt: Date.now(),
     }
-    if (group) this.memory.schedule(Number(group.id))
-    else this.memory.scheduleMember(Number(member.id))
+      if (settings.memoryEnabled) {
+        if (group) this.memory.schedule(Number(group.id))
+        else this.memory.scheduleMember(Number(member.id))
+      }
 
     if (!shouldReply) {
       await this.bridge.recordTranscript(displayEvent, row, true)
-      if (group) this.memory.schedule(Number(group.id))
+      if (settings.memoryEnabled && group) this.memory.schedule(Number(group.id))
       return
     }
 
@@ -179,8 +184,10 @@ export class QQChatRuntime {
         accountId: message.accountId, chatType: message.chatType, groupId: group?.id,
         memberId: message.chatType === 'c2c' ? member.id : undefined, direction: 'outbound', content: reply, mentioned: false,
       })
+    if (settings.memoryEnabled) {
       if (group) this.memory.schedule(Number(group.id))
       else this.memory.scheduleMember(Number(member.id))
+    }
     } catch (error) {
       this.logger.error?.(`[dsh-qqchat] QQ turn failed: ${error instanceof Error ? error.stack || error.message : String(error)}`)
     }

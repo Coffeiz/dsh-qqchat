@@ -21,7 +21,7 @@ import type {
   OutboxRow,
   PublicAccountRow,
   QQChatRuntimeSettings,
-} from './types.js'
+} from '../types.js'
 
 const now = (): number => Date.now()
 
@@ -323,6 +323,7 @@ export class QQChatDatabase {
 
   runtimeSettings(defaults: QQChatRuntimeSettings): QQChatRuntimeSettings {
     return {
+      memoryEnabled: this.getSetting('memoryEnabled', defaults.memoryEnabled),
       groupReceiveMode: this.getSetting('groupReceiveMode', defaults.groupReceiveMode),
       groupReplyFormat: this.getSetting('groupReplyFormat', defaults.groupReplyFormat),
       directReplyFormat: this.getSetting('directReplyFormat', this.getSetting('replyFormat', defaults.directReplyFormat)),

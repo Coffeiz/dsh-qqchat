@@ -20,6 +20,7 @@ export type GatewayStatus = 'offline' | 'connecting' | 'online' | 'error'
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
 export interface QQChatRuntimeSettings {
+  memoryEnabled: boolean
   groupReceiveMode: GroupReceiveMode
   groupReplyFormat: ReplyFormat
   directReplyFormat: ReplyFormat
@@ -28,6 +29,7 @@ export interface QQChatRuntimeSettings {
 }
 
 export interface QQChatRuntimeSettingsPatch {
+  memoryEnabled?: boolean
   groupReceiveMode?: GroupReceiveMode
   groupReplyFormat?: ReplyFormat
   directReplyFormat?: ReplyFormat

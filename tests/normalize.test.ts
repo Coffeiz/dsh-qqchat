@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { messageMentionsBot, normalizeQQDispatch, renderQQMentionNames } from '../src/normalize.js'
+import { messageMentionsBot, normalizeQQDispatch, renderQQMentionNames } from '../src/gateway/normalize.js'
 
 test('group identity prefers user_openid over member_openid and nickname', () => {
   const message = normalizeQQDispatch('GROUP_AT_MESSAGE_CREATE', {

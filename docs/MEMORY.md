@@ -71,6 +71,11 @@ QQChat 的 SQLite 是 QQ 世界事实来源，DSH Session 只保存 Agent 实际
 
 ## Agent context
 
+记忆上下文通过 DSH 官方 runtime-context snapshot 机制注入：快照使用
+`@deepseek-ai/dsh-system-prompt` 来源标记，并由 DSH 自动替换上一份快照，
+不会把每轮完整记忆累积成普通用户消息。当前 QQ 消息仍作为正常 user prompt
+进入 turn。
+
 群聊 Agent turn 注入：
 
 ```text
