@@ -19,7 +19,7 @@ export function QQSettings({ rpc }: { rpc: Rpc }) {
         call<{ accounts: Account[] }>(rpc, 'status'),
         call<{ settings: Settings; members: KnownMember[] }>(rpc, 'settings/get'),
       ])
-      setAccount(status.accounts.find(item => item.enabled) || status.accounts[0] || null)
+      setAccount(status.accounts.find(item => item.enabled) || null)
       setSettings(prefs.settings)
       setMembers(prefs.members || [])
       setError('')
@@ -53,6 +53,16 @@ export function QQSettings({ rpc }: { rpc: Rpc }) {
   const startAuth = async () => {
     setBusy(true)
     try { setAuth(await call<{ taskId: string; qrDataUrl: string }>(rpc, 'auth/start')); setError('') } catch (err) { setError(err instanceof Error ? err.message : String(err)) } finally { setBusy(false) }
+  }
+  const disconnect = async () => {
+    if (!account) return
+    setBusy(true)
+    try {
+      await call(rpc, 'account/disconnect', { accountId: account.id })
+      setAccount(null)
+      setAuth(null)
+      setError('已取消连接，可以重新扫码绑定 Bot。')
+    } catch (err) { setError(err instanceof Error ? err.message : String(err)) } finally { setBusy(false) }
   }
   const openLogs = async () => {
     try { setLogs((await call<{ logs: PluginLog[] }>(rpc, 'logs/list', { limit: 300 })).logs) } catch (err) { setError(err instanceof Error ? err.message : String(err)) }
@@ -90,7 +100,7 @@ export function QQSettings({ rpc }: { rpc: Rpc }) {
 
   const head = h('div', { className: 'qqsHead' },
     h('div', null, h('div', { className: 'qqsTitle' }, 'QQ Chat'), h('div', { className: 'qqMuted' }, 'QQ Bot 接收、兼容与权限设置')),
-    h('div', { className: 'qqStatus' }, account ? (account.gatewayStatus === 'online' ? '已连接' : '已授权') : '未连接'))
+    h('div', { className: 'qqStatus' }, account ? (account.gatewayStatus === 'online' ? '已连接' : '已授权') : '未连接', account && h(Button, { size: 'sm', variant: 'outline', disabled: busy, onClick: () => void disconnect() }, '取消连接')))
 
   if (!account) return h('div', { className: 'qqs' }, head, error && h('div', { className: 'qqError' }, error), h('div', { className: 'qqConnect' }, h('div', { className: 'qqsTitle' }, auth ? '使用 QQ 扫码授权' : '连接 QQ Bot'), h('div', { className: 'qqMuted' }, '扫码和凭据解密都在 DSH Host 侧完成。'), auth && h('div', { className: 'qqQr' }, h('img', { src: auth.qrDataUrl, alt: 'QQ 授权二维码' })), h(Button, { variant: 'primary', disabled: busy, onClick: () => void startAuth() }, auth ? '重新生成二维码' : '扫码连接')))
   if (!settings) return h('div', { className: 'qqs' }, head, h('div', { className: 'qqMuted' }, '正在读取设置…'))
