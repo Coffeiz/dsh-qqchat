@@ -1,57 +1,16 @@
-import { React, h, useEffect, useState, call, Modal, short, initials, time } from './shared.cjs'
-import type { ChatInfo, ChatMember, ComposerProps, QQEventData, QQNode, Rpc, SessionUtilityProps } from './shared.cjs'
+import { React, h, useEffect, useState, call, Modal, Button, time } from './shared.cjs'
+import type { ChatInfo, ChatMember, QQEventData, QQNode, Rpc, SessionUtilityProps } from './shared.cjs'
 
 export function QQTranscriptNode({ node }: { node: QQNode }) {
   const data = node.data
   const outbound = data.direction === 'outbound'
   return h('div', { className: `qqTranscript${outbound ? ' out' : ''}` },
-    h('div', { className: 'qqAvatar' }, outbound ? 'ME' : initials(data.senderName)),
     h('div', { className: 'qqTranscriptBody' },
-      h('div', { className: 'qqTranscriptMeta' }, outbound ? 'Owner' : `${data.senderName || 'QQ 用户'} · ${short(data.senderId)}`, ' · ', time(data.createdAt)),
-      h('div', { className: 'qqBubble' }, data.quotedText && h('div', { className: 'qqQuote' }, data.quotedText), data.content)))
-}
-
-export function QQComposer({ matched, rpc }: ComposerProps & { rpc: Rpc }) {
-  const [info, setInfo] = useState<ChatInfo | null>(null)
-  const [draft, setDraft] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    void call<ChatInfo>(rpc, 'chat/info', { sessionId: matched.sessionId })
-      .then(setInfo)
-      .catch(err => setError(err instanceof Error ? err.message : String(err)))
-  }, [matched.sessionId, rpc])
-
-  const send = async () => {
-    if (!info || !draft.trim()) return
-    setBusy(true)
-    try {
-      await call(rpc, 'chat/send', { chatType: info.chatType, rowId: info.rowId, content: draft.trim() })
-      setDraft('')
-      setError('')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return h('div', { style: { width: '100%' } },
-    h('div', { className: 'qqComposer' },
-      h('textarea', {
-        value: draft,
-        placeholder: info ? `发送到 ${info.title}…` : '正在读取 QQ 会话…',
-        onChange: (event: import('react').ChangeEvent<HTMLTextAreaElement>) => setDraft(event.target.value),
-        onKeyDown: (event: import('react').KeyboardEvent<HTMLTextAreaElement>) => {
-          if (event.key === 'Enter' && !event.shiftKey) {
-            event.preventDefault()
-            void send()
-          }
-        },
-      }),
-      h('button', { type: 'button', className: 'qqBtn primary', disabled: busy || !draft.trim() || !info, onClick: () => void send() }, busy ? '发送中' : '发送')),
-    h('div', { className: error ? 'qqError' : 'qqComposerHint' }, error || 'QQ Session：这里发送的内容直接发到 QQ，不会作为本地 DSH prompt 再运行一次 Agent。'))
+      h('div', { className: 'qqTranscriptMeta' }, data.senderName || (outbound ? 'Owner' : 'QQ 用户'), ' · ', time(data.createdAt)),
+      data.quotedText && h('div', { className: 'qqQuote', title: data.quotedText },
+        h('div', { className: 'qqQuoteLabel' }, '引用消息'),
+        h('div', { className: 'qqQuoteText' }, data.quotedText)),
+      h('div', { className: 'qqBubble' }, data.content)))
 }
 
 export function MemoryCard({ title, value }: { title: string; value: string }) {
@@ -63,14 +22,15 @@ export function MemoryCard({ title, value }: { title: string; value: string }) {
 function MemberMemory({ member, onBack }: { member: ChatMember; onBack(): void }) {
   return h(React.Fragment, null,
     h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 } },
-      h('button', { type: 'button', className: 'qqBtn', onClick: onBack }, '返回群记忆'),
+      h(Button, { size: 'sm', variant: 'outline', onClick: onBack }, '返回群记忆'),
       h('div', { className: 'qqGrow' },
         h('div', { className: 'qqsTitle' }, member.displayName || '群友'),
         h('div', { className: 'qqMemberId' }, member.platformUserId))),
     h('div', { className: 'qqMemoryGrid' },
       h(MemoryCard, { title: '成员画像 · profile', value: member.memory.profile }),
       h(MemoryCard, { title: '行为模式 · pattern', value: member.memory.pattern }),
-      h(MemoryCard, { title: '成员摘要 · summary', value: member.memory.summary })))
+      h(MemoryCard, { title: '成员摘要 · summary', value: member.memory.summary }),
+      h(MemoryCard, { title: '成员长期记忆 · memory', value: member.memory.memory })))
 }
 
 export function QQSessionUtility({ sessionId, rpc }: SessionUtilityProps & { rpc: Rpc }) {
@@ -113,16 +73,16 @@ export function QQSessionUtility({ sessionId, rpc }: SessionUtilityProps & { rpc
                   onClick: () => setSelectedMember(member),
                   style: { width: '100%', border: 0, background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer' },
                 },
-                h('div', { className: 'qqAvatar' }, initials(member.displayName)),
-                h('div', { className: 'qqGrow' },
-                  h('div', null, member.displayName || '群友'),
-                  h('div', { className: 'qqMemberId' }, member.platformUserId)),
+        h('div', { className: 'qqGrow' },
+          h('div', null, member.displayName || '群友'),
+          member.aliases?.length ? h('div', { className: 'qqMemberId' }, `历史昵称：${member.aliases.join('、')}`) : null,
+          member.nicknames?.length ? h('div', { className: 'qqMemberId' }, `群内称呼：${member.nicknames.join('、')}`) : null),
                 h('span', { className: 'qqBadge' }, '查看记忆'))))
             : null)
     : null
 
   return h(React.Fragment, null,
-    h('button', { type: 'button', className: 'qqHeaderButton', onClick: () => void show() }, 'QQ 记忆'),
+    h(Button, { size: 'sm', variant: 'outline', onClick: () => void show() }, 'QQ 记忆'),
     open && info
       ? h(Modal, {
           title: selectedMember

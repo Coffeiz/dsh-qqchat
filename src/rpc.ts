@@ -112,6 +112,9 @@ export function createQQChatRpc(runtime: QQChatRuntime): ConnectionRpcHandler {
                 id: Number(member.id),
                 platformUserId: member.platform_user_id,
                 displayName: member.display_name || '',
+                aliases: parseStringList(member.aliases_json),
+                nicknames: parseStringList(member.nicknames_json),
+                messageCount: Number(member.message_count || 0),
                 memory: normalizeMemory(member.memory),
               })),
             })
@@ -140,6 +143,9 @@ export function createQQChatRpc(runtime: QQChatRuntime): ConnectionRpcHandler {
               id: Number(member.id),
               platformUserId: member.platform_user_id,
               displayName: member.display_name || '',
+              aliases: parseStringList(member.aliases_json),
+              nicknames: parseStringList(member.nicknames_json),
+              messageCount: Number(member.message_count || 0),
               firstSeenAt: Number(member.first_seen_at),
               lastSeenAt: Number(member.last_seen_at),
               memory: normalizeMemory(member.memory),
@@ -214,6 +220,16 @@ function normalizeMemory(memory: MemoryDocuments) {
   }
 }
 
+function parseStringList(value: string | null | undefined): string[] {
+  if (!value) return []
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed.filter(item => typeof item === 'string') : []
+  } catch {
+    return []
+  }
+}
+
 function requireString(payload: unknown, key: string): string {
   const value = asRecord(payload)?.[key]
   if (typeof value !== 'string' || !value.trim()) throw new Error(`${key} 必须是非空字符串`)
@@ -254,9 +270,8 @@ function asSettingsPatch(value: unknown): QQChatRuntimeSettingsPatch {
   if (record.groupReceiveMode === 'auto' || record.groupReceiveMode === 'mention' || record.groupReceiveMode === 'silent') {
     patch.groupReceiveMode = record.groupReceiveMode
   }
-  if (record.replyFormat === 'smart' || record.replyFormat === 'markdown' || record.replyFormat === 'compat') {
-    patch.replyFormat = record.replyFormat
-  }
+  if (record.groupReplyFormat === 'smart' || record.groupReplyFormat === 'markdown' || record.groupReplyFormat === 'compat') patch.groupReplyFormat = record.groupReplyFormat
+  if (record.directReplyFormat === 'smart' || record.directReplyFormat === 'markdown' || record.directReplyFormat === 'compat') patch.directReplyFormat = record.directReplyFormat
   if (typeof record.groupMembersCanUseTools === 'boolean') patch.groupMembersCanUseTools = record.groupMembersCanUseTools
   if (typeof record.ownerUserId === 'string') patch.ownerUserId = record.ownerUserId
   return patch

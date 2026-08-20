@@ -7,6 +7,7 @@ import type { MemoryEngine } from './memory.js'
 import type { QQApiClient } from './qq-api.js'
 import type { QQBindService } from './qq-auth.js'
 import { QQGateway } from './qq-gateway.js'
+import { renderQQMentionNames } from './normalize.js'
 import type {
   AccountRow, ChatTargetRow, ChatType, GroupReceiveMode, GroupRow, MemberRow, QQChatConfig,
   QQChatDisplayEvent, QQChatRuntimeSettings, QQChatRuntimeSettingsPatch, QQNormalizedMessage, ReplyFormat,
@@ -46,9 +47,13 @@ export class QQChatRuntime {
       if (!isGroupReceiveMode(patch.groupReceiveMode)) throw new Error('无效的群聊接收模式')
       this.db.setSetting('groupReceiveMode', patch.groupReceiveMode)
     }
-    if (patch.replyFormat !== undefined) {
-      if (!isReplyFormat(patch.replyFormat)) throw new Error('无效的消息兼容格式')
-      this.db.setSetting('replyFormat', patch.replyFormat)
+    if (patch.groupReplyFormat !== undefined) {
+      if (!isReplyFormat(patch.groupReplyFormat)) throw new Error('无效的群聊消息兼容格式')
+      this.db.setSetting('groupReplyFormat', patch.groupReplyFormat)
+    }
+    if (patch.directReplyFormat !== undefined) {
+      if (!isReplyFormat(patch.directReplyFormat)) throw new Error('无效的私聊消息兼容格式')
+      this.db.setSetting('directReplyFormat', patch.directReplyFormat)
     }
     if (patch.groupMembersCanUseTools !== undefined) this.db.setSetting('groupMembersCanUseTools', Boolean(patch.groupMembersCanUseTools))
     if (patch.ownerUserId !== undefined) this.db.setSetting('ownerUserId', String(patch.ownerUserId).trim())
@@ -85,7 +90,8 @@ export class QQChatRuntime {
     const account = this.db.accountById(Number(row.account_id))
     if (!account) throw new Error('QQ 账号不存在')
     const targetId = chatType === 'group' ? (row as GroupRow).platform_group_id : (row as MemberRow).platform_user_id
-    await this.api.sendText(account, targetId, text, { group: chatType === 'group', messageId: null, format: this.settings().replyFormat })
+    const settings = this.settings()
+    await this.api.sendText(account, targetId, text, { group: chatType === 'group', messageId: null, format: chatType === 'group' ? settings.groupReplyFormat : settings.directReplyFormat })
     const messageDbId = this.db.insertMessage({
       accountId: Number(account.id), chatType, groupId: chatType === 'group' ? Number(row.id) : undefined,
       memberId: chatType === 'c2c' ? Number(row.id) : undefined, direction: 'outbound', content: text,
@@ -124,13 +130,18 @@ export class QQChatRuntime {
     const member = this.db.upsertMember(message.accountId, message.senderId, message.senderName)
     let group: GroupRow | undefined
     let shouldReply = true
+    const settings = this.settings()
     if (message.chatType === 'group') {
       if (!message.groupOpenid) return
-      const mode = this.settings().groupReceiveMode
+      const mode = settings.groupReceiveMode
       group = this.db.upsertGroup(message.accountId, message.groupOpenid, { enabled: true, requiresAt: mode === 'mention', readEnabled: true })
       this.db.touchGroupMember(Number(group.id), Number(member.id), message.senderName)
       shouldReply = mode === 'auto' || (mode === 'mention' && message.mentioned)
     }
+    message.text = renderQQMentionNames(message.text, message.raw, id => {
+      const mentionedMember = this.db.memberByPlatform(message.accountId, id)
+      return mentionedMember?.display_name || undefined
+    })
 
     const messageDbId = this.db.insertMessage({
       accountId: message.accountId, platformMessageId: message.messageId, chatType: message.chatType, groupId: group?.id,
@@ -141,7 +152,10 @@ export class QQChatRuntime {
     const displayEvent: QQChatDisplayEvent = {
       messageId: `db:${messageDbId}`, chatType: message.chatType,
       chatId: message.chatType === 'group' ? message.groupOpenid! : message.senderId,
-      direction: 'inbound', senderId: message.senderId, senderName: message.senderName || 'QQ 用户', content: message.text,
+      direction: 'inbound', senderId: message.senderId, senderName: message.senderName || 'QQ 用户',
+      isOwner: message.chatType === 'c2c'
+        || (settings.ownerUserId !== '' && message.senderId === settings.ownerUserId),
+      content: message.text,
       quotedText: message.quotedText, mentioned: message.mentioned, createdAt: Date.now(),
     }
     if (group) this.memory.schedule(Number(group.id))
@@ -154,9 +168,12 @@ export class QQChatRuntime {
     }
 
     try {
+      // Keep the incoming QQ message visible in Web independently from the
+      // notice-shaped message used to drive the Agent turn.
+      await this.bridge.recordTranscript(displayEvent, row, true)
       const reply = await this.bridge.reply(message, group, member)
       await this.api.sendReplyWithActiveFallback(account, message.chatType === 'group' ? message.groupOpenid! : message.senderId, reply, {
-        group: message.chatType === 'group', messageId: message.messageId || null, format: this.settings().replyFormat,
+        group: message.chatType === 'group', messageId: message.messageId || null, format: message.chatType === 'group' ? settings.groupReplyFormat : settings.directReplyFormat,
       })
       this.db.insertMessage({
         accountId: message.accountId, chatType: message.chatType, groupId: group?.id,
@@ -174,12 +191,13 @@ export class QQChatRuntime {
   }
 
   private async flushOutbox(): Promise<void> {
+    const settings = this.settings()
     for (const item of this.db.dueOutbox()) {
       try {
         const account = this.db.accountById(Number(item.account_id))
         if (!account) throw new Error('QQ account missing')
         await this.api.sendText(account, item.target_id, item.content, {
-          group: item.chat_type === 'group', messageId: null, format: this.settings().replyFormat,
+        group: item.chat_type === 'group', messageId: null, format: item.chat_type === 'group' ? settings.groupReplyFormat : settings.directReplyFormat,
         })
         this.db.finishOutbox(Number(item.id))
       } catch (error) {

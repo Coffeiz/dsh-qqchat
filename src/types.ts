@@ -2,6 +2,18 @@ export type ChatType = 'c2c' | 'group'
 export type MessageDirection = 'inbound' | 'outbound'
 export type MemoryScopeType = 'group' | 'member'
 export type MemoryDocType = 'profile' | 'summary' | 'daily' | 'memory' | 'pattern'
+export type ProfileEntryType = 'name' | 'address' | 'pronoun' | 'background' | 'preference' | 'note'
+
+export interface ProfileEntry {
+  type: ProfileEntryType
+  text: string
+  ts: number
+}
+
+export interface DailyEntry {
+  date: string
+  note: string
+}
 export type ReplyFormat = 'smart' | 'markdown' | 'compat'
 export type GroupReceiveMode = 'auto' | 'mention' | 'silent'
 export type GatewayStatus = 'offline' | 'connecting' | 'online' | 'error'
@@ -9,14 +21,16 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
 export interface QQChatRuntimeSettings {
   groupReceiveMode: GroupReceiveMode
-  replyFormat: ReplyFormat
+  groupReplyFormat: ReplyFormat
+  directReplyFormat: ReplyFormat
   groupMembersCanUseTools: boolean
   ownerUserId: string
 }
 
 export interface QQChatRuntimeSettingsPatch {
   groupReceiveMode?: GroupReceiveMode
-  replyFormat?: ReplyFormat
+  groupReplyFormat?: ReplyFormat
+  directReplyFormat?: ReplyFormat
   groupMembersCanUseTools?: boolean
   ownerUserId?: string
 }
@@ -52,6 +66,7 @@ export interface QQChatConfigInput {
   reflectionBatchSize?: number
   reflectionMaxMessages?: number
   memoryMaxTokens?: number
+  memoryCompressionMaxTokens?: number
 }
 
 export interface QQChatConfig {
@@ -71,6 +86,7 @@ export interface QQChatConfig {
   readonly reflectionBatchSize: number
   readonly reflectionMaxMessages: number
   readonly memoryMaxTokens: number
+  readonly memoryCompressionMaxTokens: number
 }
 
 export interface AccountRow {
@@ -160,6 +176,9 @@ export interface GroupMemberRow {
   display_name: string | null
   first_seen_at: number
   last_seen_at: number
+  aliases_json: string | null
+  nicknames_json: string | null
+  message_count: number
 }
 
 export interface MessageRow {
@@ -220,6 +239,7 @@ export interface QQChatDisplayEvent {
   direction: MessageDirection
   senderId: string
   senderName: string
+  isOwner?: boolean
   content: string
   quotedText: string
   mentioned: boolean
@@ -270,6 +290,8 @@ export interface QQDispatchData extends Record<string, unknown> {
   message_reference?: Record<string, unknown>
   reference?: Record<string, unknown>
   quote?: Record<string, unknown>
+  msg_elements?: Array<Record<string, unknown>>
+  message_scene?: { ext?: unknown[] }
 }
 
 export interface QQAccessTokenPayload {
@@ -338,6 +360,8 @@ export interface ReflectionMemberUpdate {
   profile?: unknown
   pattern?: unknown
   summary?: unknown
+  memory?: unknown
+  nicknames?: unknown
 }
 
 export interface ReflectionPayload {

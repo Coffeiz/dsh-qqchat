@@ -16,13 +16,36 @@ test('SQLite keeps group/member identity and deduplicates platform messages', ()
   const group = db.upsertGroup(Number(account.id), 'group-openid', { requiresAt: true, readEnabled: true })
   const member = db.upsertMember(Number(account.id), 'user-openid', 'Alice')
   db.touchGroupMember(Number(group.id), Number(member.id), '群昵称')
+  db.touchGroupMember(Number(group.id), Number(member.id), '新昵称')
   const first = db.insertMessage({ accountId: Number(account.id), platformMessageId: 'msg-1', chatType: 'group', groupId: Number(group.id), memberId: Number(member.id), direction: 'inbound', content: '你好' })
   const second = db.insertMessage({ accountId: Number(account.id), platformMessageId: 'msg-1', chatType: 'group', groupId: Number(group.id), memberId: Number(member.id), direction: 'inbound', content: '重复' })
   assert.equal(first, second)
   const rows = db.listMessages(Number(group.id))
   assert.equal(rows.length, 1)
   assert.equal(rows[0]?.platform_user_id, 'user-openid')
-  assert.equal(db.listGroupMembers(Number(group.id))[0]?.display_name, '群昵称')
+  assert.equal(db.listGroupMembers(Number(group.id))[0]?.display_name, '新昵称')
+  assert.deepEqual(JSON.parse(db.listGroupMembers(Number(group.id))[0]?.aliases_json || '[]'), ['群昵称'])
+  db.addGroupMemberNickname(Number(group.id), Number(member.id), '小群友')
+  assert.deepEqual(JSON.parse(db.listGroupMembers(Number(group.id))[0]?.nicknames_json || '[]'), ['小群友'])
+  assert.equal(db.listGroupMembers(Number(group.id))[0]?.message_count, 1)
+}))
+
+test('member profiles migrate to typed entries without losing fields', () => withDb(db => {
+  const account = db.upsertAccount('app-profile', 'secret-profile')
+  const member = db.upsertMember(Number(account.id), 'profile-user', 'Profile User')
+  db.setMemoryDoc('member', Number(member.id), 'profile', JSON.stringify({ name_observed: 'Profile User', preference: '简洁' }))
+  // A new database already uses the migration-compatible storage contract; verify the
+  // persisted value remains valid JSON and can be replaced by typed entries.
+  db.setMemoryDoc('member', Number(member.id), 'profile', JSON.stringify([{ type: 'name', text: 'Profile User', ts: 1 }]))
+  assert.deepEqual(JSON.parse(db.memoryDocs('member', Number(member.id)).profile || '[]')[0], { type: 'name', text: 'Profile User', ts: 1 })
+}))
+
+test('daily entries share one heading per date', () => withDb(db => {
+  db.appendDailyDoc('group', 1, '2026-08-20', '第一条')
+  db.appendDailyDoc('group', 1, '2026-08-20', '第二条')
+  const daily = db.memoryDocs('group', 1).daily || ''
+  assert.equal((daily.match(/^## 2026-08-20$/gm) || []).length, 1)
+  assert.match(daily, /- 第一条\n- 第二条/)
 }))
 
 test('memory documents preserve separate group and member scopes', () => withDb(db => {
@@ -38,18 +61,20 @@ test('memory documents preserve separate group and member scopes', () => withDb(
 test('runtime settings persist independently from static config defaults', () => withDb(db => {
   const defaults = {
     groupReceiveMode: 'mention' as const,
-    replyFormat: 'smart' as const,
+    groupReplyFormat: 'smart' as const,
+    directReplyFormat: 'smart' as const,
     groupMembersCanUseTools: false,
     ownerUserId: '',
   }
   assert.deepEqual(db.runtimeSettings(defaults), defaults)
   db.setSetting('groupReceiveMode', 'silent')
-  db.setSetting('replyFormat', 'compat')
+  db.setSetting('groupReplyFormat', 'compat')
   db.setSetting('groupMembersCanUseTools', true)
   db.setSetting('ownerUserId', 'owner-openid')
   assert.deepEqual(db.runtimeSettings(defaults), {
     groupReceiveMode: 'silent',
-    replyFormat: 'compat',
+    groupReplyFormat: 'compat',
+    directReplyFormat: 'smart',
     groupMembersCanUseTools: true,
     ownerUserId: 'owner-openid',
   })

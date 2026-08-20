@@ -16,6 +16,18 @@ declare module '@deepseek-ai/dsh-llm' {
       messageId: string
       mentioned: boolean
     }
+    'qq-chat': {
+      kind: 'qq-chat'
+      botId: string
+      chatType: 'c2c' | 'group'
+      chatId: string
+      senderId: string
+      senderName?: string
+      messageId: string
+      mentioned: boolean
+      form: 'notice'
+      summary: string
+    }
     'qq-chat-bootstrap': {
       kind: 'qq-chat-bootstrap'
       plugin: 'dsh-qqchat'

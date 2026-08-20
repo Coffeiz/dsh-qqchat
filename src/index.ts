@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-client-connection'
 import { DshQQBridge } from './agent-bridge.js'
 import { resolveConfig } from './config.js'
@@ -14,7 +15,7 @@ import { QQChatRuntime } from './runtime.js'
 import type { LoggerLike, QQChatConfigInput } from './types.js'
 
 export const name = 'dsh-qqchat'
-export const inject = ['connection', 'agents', 'llm', 'tools'] as const
+export const inject = ['connection', 'agents', 'agentDefaultModel', 'llm', 'tools', 'workspaceRegistry'] as const
 
 export function apply(ctx: Context, inputConfig: QQChatConfigInput = {}): void {
   const config = resolveConfig(inputConfig)

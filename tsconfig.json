@@ -9,7 +9,7 @@
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "useUnknownInCatchVariables": true,
-    "verbatimModuleSyntax": true,
+    "verbatimModuleSyntax": false,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "noEmit": true

@@ -14,6 +14,7 @@ const DEFAULT_CONFIG = Object.freeze({
   reflectionBatchSize: 20,
   reflectionMaxMessages: 80,
   memoryMaxTokens: 1400,
+  memoryCompressionMaxTokens: 15000,
 })
 
 export function resolveConfig(input: QQChatConfigInput = {}): QQChatConfig {
@@ -39,6 +40,7 @@ export function resolveConfig(input: QQChatConfigInput = {}): QQChatConfig {
     reflectionBatchSize: positiveInt(input.reflectionBatchSize, DEFAULT_CONFIG.reflectionBatchSize),
     reflectionMaxMessages: positiveInt(input.reflectionMaxMessages, DEFAULT_CONFIG.reflectionMaxMessages),
     memoryMaxTokens: positiveInt(input.memoryMaxTokens, DEFAULT_CONFIG.memoryMaxTokens),
+    memoryCompressionMaxTokens: positiveInt(input.memoryCompressionMaxTokens, DEFAULT_CONFIG.memoryCompressionMaxTokens),
   })
 }
 
@@ -48,7 +50,8 @@ export function defaultRuntimeSettings(config: QQChatConfig): QQChatRuntimeSetti
     : config.groupRequiresAt ? 'mention' : 'auto'
   return {
     groupReceiveMode,
-    replyFormat: config.replyFormat,
+    groupReplyFormat: 'compat',
+    directReplyFormat: config.replyFormat,
     groupMembersCanUseTools: false,
     ownerUserId: '',
   }

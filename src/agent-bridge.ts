@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import type { AgentHandle, AgentOptions, AgentSetup, PreStepDecision as AgentPreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import type { PreToolDecision } from '@deepseek-ai/dsh-tools'
@@ -24,6 +25,7 @@ import type {
 interface AgentPreset { id: string }
 interface AgentPresetService { resolve(id?: string): Promise<AgentPreset>; mount(ctx: Context, id: string): Promise<unknown> }
 interface SessionTitleService { get(session: Session): unknown; rename(session: Session, title: string): unknown }
+interface WorkspaceRegistryService { archivedSessionIds: readonly string[] }
 interface Composition { presetId?: string; setup?: AgentSetup }
 interface ActiveActor { chatType: ChatType; senderId: string }
 
@@ -86,6 +88,10 @@ export class DshQQBridge {
     const existing = this.db.getChatSession(event.chatType, Number(row.id))
     if (!existing && !createSession) return undefined
     const { agent, sessionId } = await this.ensureAgent(event.chatType, row)
+    if (event.isOwner) {
+      this.appendOwnerMessageIfMissing(agent.session, event)
+      return sessionId
+    }
     this.appendDisplayIfMissing(agent.session, event)
     return sessionId
   }
@@ -108,11 +114,14 @@ export class DshQQBridge {
 
       const current = createUserMessage({
         source: {
-          kind: 'user', channel: 'qq', botId: String(message.accountId), chatType: message.chatType,
-          chatId: message.chatId, senderId: message.senderId, senderName: message.senderName || undefined,
+          kind: 'qq-chat', botId: String(message.accountId), chatType: message.chatType,
+          chatId: message.chatId, senderId: message.senderId,
+          ...(message.senderName ? { senderName: message.senderName } : {}),
           messageId: message.messageId || '', mentioned: Boolean(message.mentioned),
+          form: 'notice',
+          summary: `QQ ${message.chatType === 'group' ? '群聊' : '私聊'}消息 · ${message.senderName || shortId(message.senderId)}`,
         },
-        content: [{ type: 'text', text: visiblePromptText(message) }],
+        content: [{ type: 'text', text: this.memory.currentMessageText(message) }],
       })
 
       this.pending.set(String(sessionId), { text: '' })
@@ -156,6 +165,17 @@ export class DshQQBridge {
   private async ensureAgent(chatType: ChatType, row: GroupRow | MemberRow): Promise<{ agent: AgentHandle['agent']; sessionId: string }> {
     let sessionId = this.db.getChatSession(chatType, Number(row.id))
     if (sessionId) {
+      if (this.isArchived(sessionId)) {
+        const old = this.handles.get(sessionId)
+        if (old) {
+          try { await old.dispose() } catch {}
+          this.handles.delete(sessionId)
+        }
+        this.logger.info?.(`[dsh-qqchat] QQ session ${sessionId} 已归档，将创建新 session`)
+        sessionId = null
+      }
+    }
+    if (sessionId) {
       const live = this.ctx.agents.get(SessionId(sessionId))
       if (live) {
         this.ensureTitle(live.session, chatType, row)
@@ -175,7 +195,11 @@ export class DshQQBridge {
     sessionId = `qqchat-${randomUUID()}`
     const composition = await this.composition()
     const handle = await this.ctx.agents.create({
-      sessionId: SessionId(sessionId), meta: composition.presetId ? { agentPreset: composition.presetId } : undefined,
+      sessionId: SessionId(sessionId),
+      meta: {
+        cwd: process.cwd(),
+        ...(composition.presetId ? { agentPreset: composition.presetId } : {}),
+      },
       agentOptions: this.agentOptions(), setup: composition.setup,
     })
     this.handles.set(sessionId, handle)
@@ -184,6 +208,11 @@ export class DshQQBridge {
     this.rememberRoute(chatType, row, handle.agent, sessionId)
     await this.ensureVisible(handle.agent)
     return { agent: handle.agent, sessionId }
+  }
+
+  private isArchived(sessionId: string): boolean {
+    const registry = (this.ctx as unknown as { workspaceRegistry?: WorkspaceRegistryService }).workspaceRegistry
+    return registry?.archivedSessionIds.includes(sessionId) ?? false
   }
 
   private rememberRoute(chatType: ChatType, row: GroupRow | MemberRow, agent: AgentHandle['agent'], sessionId: string): void {
@@ -205,6 +234,23 @@ export class DshQQBridge {
     session.append('qqchat/message', event)
   }
 
+  private appendOwnerMessageIfMissing(session: Session, event: QQChatDisplayEvent): void {
+    if (session.events.some(item => {
+      if (item.type !== 'user/message') return false
+      const source = item.data.source as unknown as { messageId?: string }
+      return source.messageId === event.messageId
+    })) return
+    session.append('user/message', createUserMessage({
+      source: {
+        kind: 'user', channel: 'qq', botId: 'qqchat', chatType: event.chatType,
+        chatId: event.chatId, senderId: event.senderId,
+        ...(event.senderName ? { senderName: event.senderName } : {}),
+        messageId: event.messageId, mentioned: event.mentioned,
+      },
+      content: [{ type: 'text', text: event.content }],
+    }), { surfaceOp: 'append' })
+  }
+
   private ensureTitle(session: Session, chatType: ChatType, row: GroupRow | MemberRow): void {
     try {
       const getService = (this.ctx as unknown as { get?: (name: string) => unknown }).get
@@ -223,6 +269,11 @@ export class DshQQBridge {
     try {
       const composition = await this.composition()
       const handle = await this.ctx.agents.resume({ resumeSessionId: SessionId(sessionId), agentOptions: this.agentOptions(), setup: composition.setup })
+      if (!handle.agent.session.header.cwd) {
+        await handle.dispose()
+        this.logger.warn?.(`[dsh-qqchat] QQ session ${sessionId} 缺少 cwd 元数据，将创建新 session`)
+        return undefined
+      }
       this.handles.set(sessionId, handle)
       return handle
     } catch (error) {
@@ -232,9 +283,11 @@ export class DshQQBridge {
   }
 
   private agentOptions(): AgentOptions {
-    const options: AgentOptions = {}
-    if (this.config.provider) options.provider = this.config.provider
-    if (this.config.model) options.model = this.config.model
+    const defaults = this.ctx.agentDefaultModel.currentSelection()
+    const options: AgentOptions = {
+      provider: this.config.provider || defaults.provider,
+      model: this.config.model || defaults.model,
+    }
     if (this.config.maxTokens) options.maxTokens = this.config.maxTokens
     return options
   }

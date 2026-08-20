@@ -6,6 +6,7 @@ import type {
   AuthTaskRow,
   ChatType,
   DirectChatListRow,
+  DailyEntry,
   GroupDefaults,
   GroupListRow,
   GroupMemberRow,
@@ -23,6 +24,57 @@ import type {
 } from './types.js'
 
 const now = (): number => Date.now()
+
+function parseStringList(value: string | null | undefined): string[] {
+  if (!value) return []
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed.filter(item => typeof item === 'string' && item.trim()).map(item => item.trim()) : []
+  } catch {
+    return []
+  }
+}
+
+function profileTypeForKey(key: string): string {
+  if (key === 'name' || key === 'name_observed' || key === 'display_name' || key === 'nickname') return 'name'
+  if (key === 'address') return 'address'
+  if (key === 'pronoun') return 'pronoun'
+  if (key === 'background' || key === 'dev_env') return 'background'
+  if (key === 'preference') return 'preference'
+  return 'note'
+}
+
+function parseDailyEntries(value: string): Array<[string, string]> {
+  const entries: Array<[string, string]> = []
+  let date = ''
+  for (const raw of value.split(/\r?\n/)) {
+    const line = raw.trim()
+    const heading = /^##\s+(\d{4}-\d{2}-\d{2})\s*$/.exec(line)
+    if (heading) {
+      date = heading[1] || ''
+      continue
+    }
+    if (!date || !line) continue
+    const note = line.startsWith('- ') ? line.slice(2).trim() : line
+    if (note) entries.push([date, note])
+  }
+  return entries
+}
+
+function renderDailyEntries(entries: Array<[string, string]>): string {
+  const out: string[] = []
+  let current = ''
+  for (const [date, note] of entries) {
+    if (!date || !note) continue
+    if (date !== current) {
+      if (out.length) out.push('')
+      out.push(`## ${date}`)
+      current = date
+    }
+    out.push(`- ${note}`)
+  }
+  return out.join('\n')
+}
 
 function one<T>(value: unknown): T | undefined {
   return value === undefined ? undefined : value as T
@@ -95,6 +147,9 @@ export class QQChatDatabase {
         display_name TEXT,
         first_seen_at INTEGER NOT NULL,
         last_seen_at INTEGER NOT NULL,
+        aliases_json TEXT NOT NULL DEFAULT '[]',
+        nicknames_json TEXT NOT NULL DEFAULT '[]',
+        message_count INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY(group_id, member_id)
       );
       CREATE TABLE IF NOT EXISTS messages (
@@ -146,6 +201,52 @@ export class QQChatDatabase {
         error TEXT
       );
     `)
+    const columns = new Set(many<{ name: string }>(this.db.prepare('PRAGMA table_info(group_members)').all()).map(column => column.name))
+    if (!columns.has('aliases_json')) this.db.exec("ALTER TABLE group_members ADD COLUMN aliases_json TEXT NOT NULL DEFAULT '[]'")
+    if (!columns.has('nicknames_json')) this.db.exec("ALTER TABLE group_members ADD COLUMN nicknames_json TEXT NOT NULL DEFAULT '[]'")
+    if (!columns.has('message_count')) this.db.exec('ALTER TABLE group_members ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0')
+    this.db.exec(`UPDATE group_members SET message_count=(
+      SELECT COUNT(*) FROM messages WHERE messages.group_id=group_members.group_id AND messages.member_id=group_members.member_id
+    ) WHERE message_count=0`)
+    this.migrateMemberProfiles()
+    this.normalizeDailyDocuments()
+  }
+
+  private migrateMemberProfiles(): void {
+    const rows = many<{ scope_key: number; content: string }>(this.db.prepare(
+      "SELECT scope_key,content FROM memory_documents WHERE scope_type='member' AND doc_type='profile'",
+    ).all())
+    const update = this.db.prepare(
+      "UPDATE memory_documents SET content=?,updated_at=? WHERE scope_type='member' AND scope_key=? AND doc_type='profile'",
+    )
+    for (const row of rows) {
+      try {
+        const value = JSON.parse(row.content)
+        if (Array.isArray(value) || !value || typeof value !== 'object') continue
+        const entries = Object.entries(value).map(([key, raw]) => ({
+          type: profileTypeForKey(key),
+          text: typeof raw === 'string' ? raw : JSON.stringify(raw),
+          ts: now(),
+        }))
+        update.run(JSON.stringify(entries, null, 2), now(), row.scope_key)
+      } catch {
+        // Preserve malformed legacy content for manual inspection.
+      }
+    }
+  }
+
+  private normalizeDailyDocuments(): void {
+    const rows = many<{ scope_type: MemoryScopeType; scope_key: number; content: string }>(this.db.prepare(
+      "SELECT scope_type,scope_key,content FROM memory_documents WHERE doc_type='daily'",
+    ).all())
+    const update = this.db.prepare(
+      'UPDATE memory_documents SET content=?,updated_at=? WHERE scope_type=? AND scope_key=? AND doc_type=\'daily\'',
+    )
+    for (const row of rows) {
+      const entries = parseDailyEntries(row.content)
+      const normalized = renderDailyEntries(entries)
+      if (normalized !== row.content.trim()) update.run(normalized, now(), row.scope_type, row.scope_key)
+    }
   }
 
   pruneAuthTasks(): void { this.db.prepare('DELETE FROM auth_tasks WHERE expires_at <= ?').run(now()) }
@@ -223,7 +324,8 @@ export class QQChatDatabase {
   runtimeSettings(defaults: QQChatRuntimeSettings): QQChatRuntimeSettings {
     return {
       groupReceiveMode: this.getSetting('groupReceiveMode', defaults.groupReceiveMode),
-      replyFormat: this.getSetting('replyFormat', defaults.replyFormat),
+      groupReplyFormat: this.getSetting('groupReplyFormat', defaults.groupReplyFormat),
+      directReplyFormat: this.getSetting('directReplyFormat', this.getSetting('replyFormat', defaults.directReplyFormat)),
       groupMembersCanUseTools: this.getSetting('groupMembersCanUseTools', defaults.groupMembersCanUseTools),
       ownerUserId: this.getSetting('ownerUserId', defaults.ownerUserId),
     }
@@ -306,16 +408,40 @@ export class QQChatDatabase {
 
   touchGroupMember(groupId: number, memberId: number, displayName = ''): void {
     const t = now()
-    this.db.prepare(`INSERT INTO group_members(group_id,member_id,display_name,first_seen_at,last_seen_at)
-      VALUES(?,?,?,?,?) ON CONFLICT(group_id,member_id) DO UPDATE SET
+    const existing = one<{ display_name: string | null; aliases_json: string | null }>(this.db.prepare(
+      'SELECT display_name,aliases_json FROM group_members WHERE group_id=? AND member_id=?',
+    ).get(groupId, memberId))
+    const aliases = parseStringList(existing?.aliases_json)
+    if (displayName && existing?.display_name && displayName !== existing.display_name && !aliases.includes(existing.display_name)) {
+      aliases.push(existing.display_name)
+    }
+    this.db.prepare(`INSERT INTO group_members(group_id,member_id,display_name,first_seen_at,last_seen_at,aliases_json)
+      VALUES(?,?,?,?,?,?) ON CONFLICT(group_id,member_id) DO UPDATE SET
       display_name=CASE WHEN excluded.display_name<>'' THEN excluded.display_name ELSE group_members.display_name END,
-      last_seen_at=excluded.last_seen_at`).run(groupId, memberId, displayName, t, t)
+      last_seen_at=excluded.last_seen_at, aliases_json=excluded.aliases_json`).run(
+        groupId, memberId, displayName, t, t, JSON.stringify(aliases),
+      )
   }
 
   listGroupMembers(groupId: number): GroupMemberRow[] {
     return many<GroupMemberRow>(this.db.prepare(`SELECT m.id,m.platform_user_id,m.display_name AS global_display_name,
-      COALESCE(NULLIF(gm.display_name,''),m.display_name) AS display_name, gm.first_seen_at,gm.last_seen_at
+      COALESCE(NULLIF(gm.display_name,''),m.display_name) AS display_name, gm.first_seen_at,gm.last_seen_at,
+      gm.aliases_json,gm.nicknames_json,gm.message_count
       FROM group_members gm JOIN members m ON m.id=gm.member_id WHERE gm.group_id=? ORDER BY gm.last_seen_at DESC`).all(groupId))
+  }
+
+  addGroupMemberNickname(groupId: number, memberId: number, nickname: string): void {
+    const value = nickname.trim()
+    if (!value) return
+    const row = one<{ nicknames_json: string | null }>(this.db.prepare(
+      'SELECT nicknames_json FROM group_members WHERE group_id=? AND member_id=?',
+    ).get(groupId, memberId))
+    if (!row) return
+    const nicknames = parseStringList(row.nicknames_json)
+    if (nicknames.includes(value)) return
+    nicknames.push(value)
+    this.db.prepare('UPDATE group_members SET nicknames_json=? WHERE group_id=? AND member_id=?')
+      .run(JSON.stringify(nicknames), groupId, memberId)
   }
 
   insertMessage(input: InsertMessageInput): number {
@@ -329,6 +455,10 @@ export class QQChatDatabase {
       .run(input.accountId, input.platformMessageId || null, input.chatType, input.groupId || null,
         input.memberId || null, input.direction, input.content || '', input.quotedText || null,
         input.mentioned ? 1 : 0, input.createdAt || now(), input.raw ? JSON.stringify(input.raw) : null)
+    if (input.chatType === 'group' && input.groupId && input.memberId) {
+      this.db.prepare('UPDATE group_members SET message_count=message_count+1 WHERE group_id=? AND member_id=?')
+        .run(input.groupId, input.memberId)
+    }
     return Number(result.lastInsertRowid)
   }
 
@@ -394,6 +524,23 @@ export class QQChatDatabase {
     const current = this.memoryDocs(scopeType, scopeKey)[docType] || ''
     const joined = [current.trim(), String(content || '').trim()].filter(Boolean).join('\n')
     this.setMemoryDoc(scopeType, scopeKey, docType, joined.slice(-maxChars))
+  }
+
+  appendDailyDoc(scopeType: MemoryScopeType, scopeKey: number, date: string, note: string, maxChars = 24_000): void {
+    const text = note.trim()
+    if (!text) return
+    const existing = this.memoryDocs(scopeType, scopeKey).daily || ''
+    const entries = parseDailyEntries(existing)
+    entries.push([date, text])
+    this.setMemoryDoc(scopeType, scopeKey, 'daily', renderDailyEntries(entries).slice(-maxChars))
+  }
+
+  dailyEntries(scopeType: MemoryScopeType, scopeKey: number): DailyEntry[] {
+    return parseDailyEntries(this.memoryDocs(scopeType, scopeKey).daily || '').map(([date, note]) => ({ date, note }))
+  }
+
+  setDailyEntries(scopeType: MemoryScopeType, scopeKey: number, entries: DailyEntry[]): void {
+    this.setMemoryDoc(scopeType, scopeKey, 'daily', renderDailyEntries(entries.map(entry => [entry.date, entry.note])))
   }
 
   getChatSession(chatType: ChatType, rowId: number): string | null {
