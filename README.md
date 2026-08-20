@@ -15,7 +15,7 @@
 - C2C 私聊与群聊
 - 稳定成员身份：`user_openid → member_openid → id`
 - 群聊接收模式：**自动回应 / @回复 / 静默记录**
-- 消息发送格式：**智能兼容 / Markdown / 纯文本兼容**
+- 群聊默认使用**纯文本兼容**，群聊与私聊可分别选择**智能兼容 / Markdown / 纯文本兼容**
 - 群成员工具总开关
 - Owner stable ID 权限判断
 - 每个 QQ 群 / 私聊对象映射一个独立 DSH Session
@@ -94,7 +94,8 @@ Settings 只负责配置，不承载群列表、聊天记录或记忆浏览器�
   [ 自动回应 ] [ @回复 ] [ 静默记录 ]
 
 消息兼容格式
-  智能兼容 / Markdown / 纯文本兼容
+  群聊：智能兼容 / Markdown / 纯文本兼容
+  私聊：智能兼容 / Markdown / 纯文本兼容
 
 工具权限
   群成员可用工具 [开/关]
@@ -208,6 +209,9 @@ QQ Session 顶部提供 **QQ 记忆** 入口。
 - `profile`
 - `pattern`
 - `summary`
+- `memory`
+
+成员 `daily` 仍会写入 SQLite 并参与压缩，目前不在成员弹窗中单独展示。
 
 同一个 Bot 下，同一 stable sender 可以跨群保持个人层面的连续记忆；群内关系和群级事件仍留在各自 group scope，不跨群泄漏。
 
@@ -218,6 +222,8 @@ QQ Session 顶部提供 **QQ 记忆** 入口。
 - `profile`
 - `pattern`
 - `summary`
+
+私聊 `daily` / `memory` 会写入 member scope 并参与反思与压缩；当前私聊弹窗暂未单独展示这两个文档。
 
 ## 模型上下文
 
@@ -272,6 +278,8 @@ senderId == Owner stable ID
 - 未反思消息达到 20 条。
 
 反思沿用该群实际 Agent 的 provider/model 路由。默认最多取 80 条未反思消息，并把 stable sender ID 一并交给记忆模型。
+
+成员 daily 超过 100 条时压缩到 `memory`，保留最近 50 条；群 daily 超过 1000 条时压缩到 `memory`，保留最近 500 条。压缩失败或日期校验失败时保留原 daily，不删除历史。
 
 ## SQLite
 
@@ -338,6 +346,8 @@ Client 源码：`client-src/*.cts`
 构建产物：`lib/`
 
 更多架构说明见 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)。
+
+开发约定见 [AGENTS.md](./AGENTS.md)，开发与验证见 [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md)，记忆规则见 [docs/MEMORY.md](./docs/MEMORY.md)，安全边界见 [docs/SECURITY.md](./docs/SECURITY.md)。
 
 ## 当前需要真实环境验证的项目
 

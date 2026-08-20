@@ -63,7 +63,8 @@ DSH 用 `turn/start` 判断一个 Session 是否仍为 blank。只有静默记�
 ```text
 扫码 / 连接状态
 自动回应 / @回复 / 静默记录
-消息兼容格式
+群聊消息兼容格式
+私聊消息兼容格式
 群成员可用工具
 Owner stable ID
 查看日志
@@ -316,7 +317,7 @@ QQ Session 顶部 `QQ 记忆`：
 group profile / summary / memory / daily
 member list
   -> 点击成员
-     -> member profile / pattern / summary
+     -> member profile / pattern / summary / memory
 ```
 
 私聊：
@@ -324,6 +325,8 @@ member list
 ```text
 member profile / pattern / summary
 ```
+
+私聊 `daily` 和 `memory` 仍属于 member scope 的持久化文档，参与反思和压缩，但当前 UI 尚未单独展示。
 
 ## 主动发送
 
@@ -390,3 +393,10 @@ tests/*.test.ts
 Host 使用 `tsc`；Client 编译到临时 CJS 后由 `scripts/wrap-client.mjs` 包装成 DSH Client factory。
 
 `lib/` 是生成物，不作为源码真相。
+
+## 开发与安全文档
+
+- [开发与验证](DEVELOPMENT.md)：安装、构建、测试、启动和浏览器验证。
+- [记忆系统](MEMORY.md)：scope、daily、反思和压缩契约。
+- [安全与数据边界](SECURITY.md)：凭据、身份、权限、日志和隔离。
+- [开发日志](devlog.md)：具体排查和设计决策。

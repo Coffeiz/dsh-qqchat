@@ -71,6 +71,8 @@
     }
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-agent-default-model": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-client-connection": "^0.1.0-rc.8",
     "@types/node": "^22.18.0",
     "@types/qrcode": "^1.5.5",
     "@types/react": "^19.1.0",
