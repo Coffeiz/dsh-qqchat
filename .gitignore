@@ -7,3 +7,5 @@ coverage/
 .client-build/
 
 lib/
+
+local.md
