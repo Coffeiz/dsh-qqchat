@@ -258,4 +258,4 @@ The code follows DSH Session / Conversation / Tool-policy extension points, but 
 
 ## License
 
-The private alpha currently has no open-source grant. A public license will be selected before release.
+This project is released under the [MIT License](./LICENSE).

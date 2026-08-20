@@ -119,4 +119,4 @@ npm run check
 
 ## License
 
-当前为私有 alpha 仓库，暂未开放源码许可。
+本项目使用 [MIT License](./LICENSE)。
