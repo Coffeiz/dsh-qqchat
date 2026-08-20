@@ -29,14 +29,22 @@ export function QQSettings({ rpc }: { rpc: Rpc }) {
   useEffect(() => { void refresh() }, [refresh])
   useEffect(() => {
     if (!auth) return
-    const timer = setInterval(async () => {
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const poll = async () => {
+      if (stopped) return
       try {
         const state = await call<{ status: string; reason?: string }>(rpc, 'auth/poll', { taskId: auth.taskId })
-        if (state.status === 'success') { clearInterval(timer); setAuth(null); await refresh() }
-        if (state.status === 'fail' || state.status === 'expired') { clearInterval(timer); setError(state.reason || '二维码已失效'); setAuth(null) }
-      } catch (err) { clearInterval(timer); setError(err instanceof Error ? err.message : String(err)) }
-    }, 1400)
-    return () => clearInterval(timer)
+        if (state.status === 'success') { setAuth(null); await refresh(); return }
+        if (state.status === 'fail' || state.status === 'expired') { setError(state.reason || '二维码已失效'); setAuth(null); return }
+      } catch (err) {
+        if (!stopped) { setError(err instanceof Error ? err.message : String(err)); setAuth(null) }
+        return
+      }
+      if (!stopped) timer = setTimeout(() => void poll(), 3000)
+    }
+    timer = setTimeout(() => void poll(), 3000)
+    return () => { stopped = true; if (timer) clearTimeout(timer) }
   }, [auth, rpc, refresh])
 
   const patch = useCallback(async (value: Partial<Settings>) => {
