@@ -8,31 +8,38 @@ import type { QQApiClient } from '../gateway/api.js'
 import type { QQBindService } from '../gateway/auth.js'
 import { QQGateway } from '../gateway/gateway.js'
 import { renderQQMentionNames } from '../gateway/normalize.js'
+import { QQMediaStore } from '../media/store.js'
 import type {
   AccountRow, ChatTargetRow, ChatType, GroupReceiveMode, GroupRow, MemberRow, QQChatConfig,
-  QQChatDisplayEvent, QQChatRuntimeSettings, QQChatRuntimeSettingsPatch, QQNormalizedMessage, ReplyFormat,
+  QQChatDisplayEvent, QQChatRuntimeSettings, QQChatRuntimeSettingsPatch, QQNormalizedMessage, QQQuoteInput, ReplyFormat, StoredAttachmentSummary,
 } from '../types.js'
 
 export class QQChatRuntime {
   readonly gateways = new Map<number, QQGateway>()
   private outboxTimer?: ReturnType<typeof setInterval>
+  private mediaCleanupTimer?: ReturnType<typeof setInterval>
 
   constructor(
     readonly ctx: Context, readonly db: QQChatDatabase, readonly api: QQApiClient,
     readonly auth: QQBindService, readonly memory: MemoryEngine, readonly bridge: DshQQBridge,
-    readonly config: QQChatConfig, readonly logger: QQChatLogger,
+    readonly config: QQChatConfig, readonly logger: QQChatLogger, readonly media: QQMediaStore,
   ) {}
 
   async start(): Promise<void> {
     for (const account of this.db.enabledAccounts()) this.startGateway(account)
     this.outboxTimer = setInterval(() => void this.flushOutbox(), 3000)
     this.outboxTimer.unref?.()
+    void this.media.cleanup()
+    this.mediaCleanupTimer = setInterval(() => void this.media.cleanup(), 60 * 60 * 1000)
+    this.mediaCleanupTimer.unref?.()
     this.logger.info?.('[dsh-qqchat] runtime started')
   }
 
   async stop(): Promise<void> {
     if (this.outboxTimer) clearInterval(this.outboxTimer)
     this.outboxTimer = undefined
+    if (this.mediaCleanupTimer) clearInterval(this.mediaCleanupTimer)
+    this.mediaCleanupTimer = undefined
     await Promise.all([...this.gateways.values()].map(gateway => gateway.stop().catch(() => undefined)))
     this.gateways.clear()
     await this.bridge.dispose()
@@ -146,9 +153,19 @@ export class QQChatRuntime {
       return mentionedMember?.display_name || undefined
     })
 
+    const ownAttachments = message.attachments.length
+      ? await this.media.ingest(message.accountId, message.messageId, message.attachments)
+      : []
+    const quotedAttachments = message.quote?.attachments?.length
+      ? await this.media.ingest(message.accountId, message.quote.messageId || message.messageId, message.quote.attachments)
+      : []
+    const storedAttachments = [...ownAttachments, ...quotedAttachments]
+    const safeQuote = message.quote ? sanitizeQuote(message.quote) : undefined
+
     const messageDbId = this.db.insertMessage({
       accountId: message.accountId, platformMessageId: message.messageId, chatType: message.chatType, groupId: group?.id,
       memberId: member.id, direction: 'inbound', content: message.text, quotedText: message.quotedText,
+      attachments: storedAttachments, quote: safeQuote,
       mentioned: message.mentioned, raw: message.raw,
     })
     const row = message.chatType === 'group' ? group! : member
@@ -159,7 +176,7 @@ export class QQChatRuntime {
       isOwner: message.chatType === 'c2c'
         || (settings.ownerUserId !== '' && message.senderId === settings.ownerUserId),
       content: message.text,
-      quotedText: message.quotedText, mentioned: message.mentioned, createdAt: Date.now(),
+      quotedText: message.quotedText, mentioned: message.mentioned, createdAt: Date.now(), attachments: publicAttachments(storedAttachments), quote: safeQuote,
     }
       if (settings.memoryEnabled) {
         if (group) this.memory.schedule(Number(group.id))
@@ -176,7 +193,7 @@ export class QQChatRuntime {
       // Keep the incoming QQ message visible in Web independently from the
       // notice-shaped message used to drive the Agent turn.
       await this.bridge.recordTranscript(displayEvent, row, true)
-      const reply = await this.bridge.reply(message, group, member)
+      const reply = await this.bridge.reply(message, group, member, storedAttachments)
       await this.api.sendReplyWithActiveFallback(account, message.chatType === 'group' ? message.groupOpenid! : message.senderId, reply, {
         group: message.chatType === 'group', messageId: message.messageId || null, format: message.chatType === 'group' ? settings.groupReplyFormat : settings.directReplyFormat,
       })
@@ -217,3 +234,9 @@ export class QQChatRuntime {
 function isGroupReceiveMode(value: unknown): value is GroupReceiveMode { return value === 'auto' || value === 'mention' || value === 'silent' }
 function isReplyFormat(value: unknown): value is ReplyFormat { return value === 'smart' || value === 'markdown' || value === 'compat' }
 function shortId(value: string): string { return value.length > 10 ? `…${value.slice(-10)}` : value }
+function publicAttachments(attachments: StoredAttachmentSummary[]): StoredAttachmentSummary[] {
+  return attachments.map(({ localPath: _localPath, ...attachment }) => attachment)
+}
+function sanitizeQuote(quote: QQQuoteInput): QQQuoteInput {
+  return { ...quote, attachments: quote.attachments.map(({ sourceUrl: _sourceUrl, ...attachment }) => attachment) }
+}

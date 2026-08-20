@@ -43,3 +43,22 @@ test('renders QQ mention ids as display names when payload or member lookup prov
     mentions: [{ id: 'u2', nickname: '小明' }, { id: 'u3' }],
   }, id => id === 'u3' ? '小红' : undefined), '你好 @小明 @小红')
 })
+
+test('normalizes QQ attachments and keeps quote metadata separate', () => {
+  const message = normalizeQQDispatch('GROUP_AT_MESSAGE_CREATE', {
+    id: 'm-media', group_openid: 'g1', content: '帮我看看',
+    author: { user_openid: 'u1', username: 'Alice' },
+    attachments: [{ id: 'file-1', url: 'https://cdn.example/image.png', filename: 'image.png', content_type: 'image/png', width: 640, height: 480 }],
+    message_reference: {
+      id: 'quoted-1', content: '原消息', author: { user_openid: 'u2', nickname: 'Bob' },
+      attachments: [{ id: 'file-2', url: 'https://cdn.example/quote.jpg', filename: 'quote.jpg', content_type: 'image/jpeg' }],
+    },
+    mentions: [{ bot: true, is_you: true, id: 'bot' }],
+  }, 7)
+  assert.ok(message)
+  assert.equal(message.attachments[0]?.kind, 'image')
+  assert.equal(message.attachments[0]?.platformFileId, 'file-1')
+  assert.equal(message.quote?.messageId, 'quoted-1')
+  assert.equal(message.quote?.senderId, 'u2')
+  assert.equal(message.quote?.attachments[0]?.quoted, true)
+})

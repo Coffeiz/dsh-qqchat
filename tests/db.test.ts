@@ -101,3 +101,29 @@ test('direct chats are listed from c2c history and keep their DSH session mappin
   assert.equal(chat?.dsh_session_id, 'qqchat-direct-session')
   assert.equal(db.listDirectMessages(Number(member.id))[0]?.content, 'hello')
 }))
+
+test('messages persist attachment summaries and quote relations', () => withDb(db => {
+  const account = db.upsertAccount('app-media', 'secret-media')
+  db.saveAttachment({ id: 'qqatt-1', accountId: Number(account.id), sourceMessageId: 'm-media', kind: 'image', filename: 'image.png', contentType: 'image/png', sizeBytes: 12, localPath: '/private/media/qqatt-1.png' })
+  const member = db.upsertMember(Number(account.id), 'media-user', 'Alice')
+  const id = db.insertMessage({
+    accountId: Number(account.id), platformMessageId: 'm-media', chatType: 'c2c', memberId: Number(member.id),
+    direction: 'inbound', content: '看看', attachments: [{ id: 'qqatt-1', kind: 'image', filename: 'image.png', contentType: 'image/png', sizeBytes: 12, quoted: false }],
+    quote: { messageId: 'm-old', senderId: 'old-user', senderName: 'Bob', text: '原消息', attachments: [] },
+  })
+  const row = db.listDirectMessages(Number(member.id))[0]
+  assert.equal(row?.id, id)
+  assert.deepEqual(JSON.parse(row?.attachments_json || '[]')[0], { id: 'qqatt-1', kind: 'image', filename: 'image.png', contentType: 'image/png', sizeBytes: 12, quoted: false })
+  assert.equal(JSON.parse(row?.quote_json || '{}').senderName, 'Bob')
+  assert.equal(db.attachmentById('qqatt-1')?.filename, 'image.png')
+}))
+
+test('attachment reuse is keyed by account and source message identity', () => withDb(db => {
+  const account = db.upsertAccount('app-reuse', 'secret-reuse')
+  db.saveAttachment({ id: 'qqatt-reuse', accountId: Number(account.id), sourceMessageId: 'quoted-message', sourceFileId: 'file-1', kind: 'image', filename: 'quote.png', contentType: 'image/png', sizeBytes: 10, localPath: '/private/media/quote.png', expiresAt: 1 })
+  const reusable = db.findReusableAttachment(Number(account.id), 'quoted-message', 'file-1', 'image')
+  assert.equal(reusable?.id, 'qqatt-reuse')
+  db.extendAttachment('qqatt-reuse', 999)
+  assert.equal(db.findReusableAttachment(Number(account.id), 'quoted-message', 'file-1', 'image')?.id, 'qqatt-reuse')
+  assert.equal(db.findReusableAttachment(Number(account.id), 'other-message', 'file-1', 'image'), undefined)
+}))

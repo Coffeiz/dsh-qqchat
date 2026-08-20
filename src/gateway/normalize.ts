@@ -1,4 +1,4 @@
-import type { QQAuthor, QQDispatchData, QQNormalizedMessage } from '../types.js'
+import type { QQAttachmentInput, QQAuthor, QQDispatchData, QQNormalizedMessage, QQQuoteInput, QQMediaKind } from '../types.js'
 
 function authorId(author: QQAuthor = {}): string {
   return String(author.user_openid || author.member_openid || author.id || '')
@@ -75,7 +75,7 @@ export function normalizeQQDispatch(
       platform: 'qq', accountId, chatType: 'c2c', chatId: senderId,
       senderId, senderName: authorName(data.author), groupOpenid: undefined,
       messageId: String(data.id || ''), text: String(data.content || '').trim(),
-      quotedText: extractQuotedText(data), mentioned: true,
+      quotedText: extractQuotedText(data), quote: extractQuote(data), attachments: extractAttachments(data), mentioned: true,
       botMentionId: '', raw: data,
     }
   }
@@ -87,7 +87,7 @@ export function normalizeQQDispatch(
       platform: 'qq', accountId, chatType: 'group', chatId: groupOpenid,
       senderId, senderName: authorName(data.author), groupOpenid,
       messageId: String(data.id || ''), text: String(data.content || '').trim(),
-      quotedText: extractQuotedText(data), mentioned: messageMentionsBot(data, eventType),
+      quotedText: extractQuotedText(data), quote: extractQuote(data), attachments: extractAttachments(data), mentioned: messageMentionsBot(data, eventType),
       botMentionId: botMentionId(data, eventType), raw: data,
     }
   }
@@ -113,6 +113,100 @@ function extractQuotedText(data: QQDispatchData): string {
     : elements.find(item => String(item.msg_idx || '') !== ownIndex)
   if (!element) return ''
   return decodeQQText(String(element.content || element.text || '').trim())
+}
+
+function extractQuote(data: QQDispatchData): QQQuoteInput | undefined {
+  const text = extractQuotedText(data)
+  const reference = data.message_reference || data.reference || data.quote
+  let record = reference && typeof reference === 'object' ? reference : undefined
+  if (!record && Array.isArray(data.msg_elements)) {
+    const ext = Array.isArray(data.message_scene?.ext) ? data.message_scene.ext : []
+    const referenceIndex = sceneValue(ext, 'ref_msg_idx') || sceneValue(ext, 'msg_ref_idx')
+    const element = referenceIndex ? data.msg_elements.find(item => String(item.msg_idx || '') === referenceIndex) : undefined
+    if (element) record = element
+  }
+  const messageId = String(record?.id || record?.message_id || record?.messageId || '').trim() || undefined
+  const sender = record?.author && typeof record.author === 'object' ? record.author as QQAuthor : undefined
+  const senderId = String(sender?.user_openid || sender?.member_openid || sender?.id || record?.sender_id || '').trim() || undefined
+  const senderName = String(sender?.username || sender?.nickname || record?.sender_name || '').trim() || undefined
+  const attachments = extractAttachments(record as QQDispatchData | undefined, true)
+  if (!text && !messageId && !senderId && attachments.length === 0) return undefined
+  return { messageId, senderId, senderName, text, attachments }
+}
+
+function extractAttachments(data: QQDispatchData | undefined, quoted = false): QQAttachmentInput[] {
+  if (!data) return []
+  const values: Array<Record<string, unknown>> = []
+  if (Array.isArray(data.attachments)) values.push(...data.attachments.filter(isRecord))
+  if (Array.isArray(data.msg_elements)) {
+    const ext = Array.isArray(data.message_scene?.ext) ? data.message_scene.ext : []
+    const referenceIndex = sceneValue(ext, 'ref_msg_idx') || sceneValue(ext, 'msg_ref_idx')
+    for (const element of data.msg_elements) {
+      if (!quoted && referenceIndex && String(element.msg_idx || '') === referenceIndex) continue
+      const type = String(element.type || element.element_type || element.kind || '').toLowerCase()
+      if (type && !/(image|photo|picture|file|video|audio|voice|record|media|attachment)/u.test(type)) continue
+      if (isRecord(element.attachment)) values.push(element.attachment)
+      else values.push(element)
+    }
+  }
+  const output: QQAttachmentInput[] = []
+  const seen = new Set<string>()
+  for (const value of values) {
+    const sourceUrl = firstString(value, ['url', 'file_url', 'download_url', 'downloadUrl', 'href', 'file'])
+    const platformFileId = firstString(value, ['file_id', 'fileid', 'fileId', 'id'])
+    if (!sourceUrl && !platformFileId && !isRecord(value.attachment)) continue
+    const filename = firstString(value, ['filename', 'file_name', 'name']) || inferFilename(sourceUrl) || 'QQ附件'
+    const contentType = firstString(value, ['content_type', 'contentType', 'mime', 'mime_type', 'type'])
+    const kind = mediaKind(contentType, filename, String(value.type || value.element_type || value.kind || ''))
+    const key = `${platformFileId || ''}|${sourceUrl || ''}|${filename}|${kind}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    output.push({
+      sourceUrl, filename, contentType, platformFileId,
+      size: numberValue(value, ['size', 'file_size', 'bytes']),
+      width: numberValue(value, ['width', 'img_width']),
+      height: numberValue(value, ['height', 'img_height']),
+      durationMs: numberValue(value, ['duration_ms', 'duration']), quoted, kind,
+    })
+  }
+  return output
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function firstString(value: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const item = value[key]
+    if (typeof item === 'string' && item.trim()) return item.trim()
+  }
+  return undefined
+}
+
+function numberValue(value: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const item = Number(value[key])
+    if (Number.isFinite(item) && item >= 0) return item
+  }
+  return undefined
+}
+
+function inferFilename(url: string | undefined): string | undefined {
+  if (!url) return undefined
+  try {
+    const name = decodeURIComponent(new URL(url).pathname.split('/').pop() || '')
+    return name && name !== '/' ? name : undefined
+  } catch { return undefined }
+}
+
+function mediaKind(contentType: string | undefined, filename: string, rawType: string): QQMediaKind {
+  const value = `${contentType || ''} ${filename} ${rawType}`.toLowerCase()
+  if (/voice|record|audio|\.(amr|silk|mp3|wav|ogg|m4a)(?:$|\?)/u.test(value)) return 'voice'
+  if (/video|\.(mp4|mov|avi|mkv|webm)(?:$|\?)/u.test(value)) return 'video'
+  if (/image|photo|picture|\.(png|jpe?g|gif|webp|bmp|heic)(?:$|\?)/u.test(value)) return 'image'
+  if (/audio/u.test(value)) return 'audio'
+  return 'file'
 }
 
 function sceneValue(ext: unknown[], key: string): string {

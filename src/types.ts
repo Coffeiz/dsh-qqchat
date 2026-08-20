@@ -18,6 +18,46 @@ export type ReplyFormat = 'smart' | 'markdown' | 'compat'
 export type GroupReceiveMode = 'auto' | 'mention' | 'silent'
 export type GatewayStatus = 'offline' | 'connecting' | 'online' | 'error'
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
+export type QQMediaKind = 'image' | 'audio' | 'video' | 'voice' | 'file'
+
+export interface QQAttachmentInput {
+  sourceUrl?: string
+  filename: string
+  contentType?: string
+  size?: number
+  width?: number
+  height?: number
+  durationMs?: number
+  platformFileId?: string
+  quoted?: boolean
+  kind?: QQMediaKind
+}
+
+export interface QQQuoteInput {
+  messageId?: string
+  senderId?: string
+  senderName?: string
+  text: string
+  attachments: QQAttachmentInput[]
+}
+
+export interface StoredAttachmentSummary {
+  id: string
+  kind: QQMediaKind
+  filename: string
+  contentType?: string
+  sizeBytes: number
+  quoted: boolean
+  localPath?: string
+  imageRef?: {
+    attachmentId: string
+    mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+    bytes: number
+    width: number
+    height: number
+    name?: string
+  }
+}
 
 export interface QQChatRuntimeSettings {
   memoryEnabled: boolean
@@ -196,6 +236,8 @@ export interface MessageRow {
   mentioned: 0 | 1
   created_at: number
   raw_json: string | null
+  attachments_json: string | null
+  quote_json: string | null
   platform_user_id?: string | null
   display_name?: string | null
 }
@@ -212,6 +254,8 @@ export interface InsertMessageInput {
   mentioned?: boolean
   createdAt?: number
   raw?: unknown
+  attachments?: StoredAttachmentSummary[]
+  quote?: QQQuoteInput
 }
 
 export interface ReflectionStateRow {
@@ -246,6 +290,8 @@ export interface QQChatDisplayEvent {
   quotedText: string
   mentioned: boolean
   createdAt: number
+  attachments?: StoredAttachmentSummary[]
+  quote?: QQQuoteInput
 }
 
 export interface QQNormalizedMessage {
@@ -259,6 +305,8 @@ export interface QQNormalizedMessage {
   messageId: string
   text: string
   quotedText: string
+  attachments: QQAttachmentInput[]
+  quote?: QQQuoteInput
   mentioned: boolean
   botMentionId: string
   raw: Record<string, unknown>
@@ -294,6 +342,7 @@ export interface QQDispatchData extends Record<string, unknown> {
   quote?: Record<string, unknown>
   msg_elements?: Array<Record<string, unknown>>
   message_scene?: { ext?: unknown[] }
+  attachments?: Array<Record<string, unknown>>
 }
 
 export interface QQAccessTokenPayload {

@@ -11,6 +11,8 @@ import type { PreToolDecision } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-tools'
 import '../shared/augmentations.js'
 import { defaultRuntimeSettings } from '../config.js'
+import { registerQQImageTool } from '../media/image-tool.js'
+import { registerQQMediaTools } from '../media/media-tools.js'
 import { dispatchQQCommand, qqCommandText } from '../commands/dispatch.js'
 import type { QQChatDatabase } from '../storage/db.js'
 import type { MemoryEngine } from '../storage/memory.js'
@@ -20,6 +22,7 @@ import type {
   LoggerLike,
   MemberRow,
   PendingReply,
+  StoredAttachmentSummary,
   QQChatConfig,
   QQChatDisplayEvent,
   QQNormalizedMessage,
@@ -42,10 +45,13 @@ export class DshQQBridge {
   private readonly selections = new Map<string, { ref: ModelSelectionRef; dispose: () => void }>()
   private readonly pendingResets = new Set<string>()
   private readonly activeActors = new Map<string, ActiveActor>()
+  private readonly activeAttachments = new Map<string, Set<string>>()
   private readonly disposeEvent: () => void
   private readonly disposeToolGate: () => void
   private readonly disposeBootstrapGate: () => void
   private readonly disposeCommands: () => void
+  private readonly disposeImageTool: () => void
+  private readonly disposeMediaTools: () => void
 
   constructor(
     private readonly ctx: Context,
@@ -74,6 +80,8 @@ export class DshQQBridge {
           : '当前 QQ 群已关闭群成员工具权限，但尚未设置 Owner stable ID。',
       }
     })
+    this.disposeImageTool = registerQQImageTool(ctx, db, (agentId, attachmentId) => this.activeAttachments.get(agentId)?.has(attachmentId) === true)
+    this.disposeMediaTools = registerQQMediaTools(ctx, db, (agentId, attachmentId) => this.activeAttachments.get(agentId)?.has(attachmentId) === true)
     this.disposeCommands = this.registerCommands()
   }
 
@@ -81,6 +89,8 @@ export class DshQQBridge {
     this.disposeEvent()
     this.disposeBootstrapGate()
     this.disposeToolGate()
+    this.disposeImageTool()
+    this.disposeMediaTools()
     this.disposeCommands()
     for (const handle of this.handles.values()) {
       try { await handle.dispose() } catch {}
@@ -90,6 +100,7 @@ export class DshQQBridge {
     this.selections.clear()
     this.pendingResets.clear()
     this.activeActors.clear()
+    this.activeAttachments.clear()
   }
 
   async ensureChatSession(chatType: ChatType, row: GroupRow | MemberRow): Promise<string> {
@@ -109,7 +120,7 @@ export class DshQQBridge {
     return sessionId
   }
 
-  async reply(message: QQNormalizedMessage, group: GroupRow | undefined, member: MemberRow): Promise<string> {
+  async reply(message: QQNormalizedMessage, group: GroupRow | undefined, member: MemberRow, attachments: StoredAttachmentSummary[] = []): Promise<string> {
     if (message.chatType === 'group' && !group) throw new Error('群消息缺少群上下文')
     const key = message.chatType === 'group' ? `g:${group!.id}` : `u:${member.id}`
     return this.serial(key, async () => {
@@ -152,16 +163,18 @@ export class DshQQBridge {
           form: 'notice',
           summary: `QQ ${message.chatType === 'group' ? '群聊' : '私聊'}消息 · ${message.senderName || shortId(message.senderId)}`,
         },
-        content: [{ type: 'text', text: this.memory.currentMessageText(message) }],
+        content: [{ type: 'text', text: this.memory.currentMessageText(message) + mediaPrompt(attachments) }],
       })
 
       this.pending.set(String(sessionId), { text: '' })
+      this.activeAttachments.set(String(sessionId), new Set(attachments.map(item => item.id)))
       this.activeActors.set(String(sessionId), { chatType: message.chatType, senderId: message.senderId })
       try {
         agent.followup(current)
         await agent.whenIdle()
       } finally {
         this.activeActors.delete(String(sessionId))
+        this.activeAttachments.delete(String(sessionId))
       }
 
       const pending = this.pending.get(String(sessionId))
@@ -471,6 +484,12 @@ function visiblePromptText(message: QQNormalizedMessage): string {
   if (message.chatType !== 'group') return body
   const speaker = message.senderName || shortId(message.senderId)
   return `${speaker} · ${shortId(message.senderId)}\n${body}`
+}
+
+function mediaPrompt(attachments: StoredAttachmentSummary[]): string {
+  if (!attachments.length) return ''
+  const lines = attachments.map(item => `- ${item.kind}: ${item.filename} (attachment_id=${item.id}${item.quoted ? ', 引用消息附件' : ''})`)
+  return `\n\n[QQ 媒体附件]\n${lines.join('\n')}\n图片可使用 qqchat_describe_image 查看。`
 }
 
 function extractText(content: readonly unknown[]): string {

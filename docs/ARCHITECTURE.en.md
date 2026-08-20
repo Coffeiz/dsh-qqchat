@@ -57,6 +57,7 @@ A new silent-only peer would otherwise remain blank because DSH uses `turn/start
 QR authorization / connection
 Auto reply / Mention only / Silent record
 reply compatibility format
+memory system [on/off]
 group-member tool permission
 Owner stable ID
 plugin logs
@@ -162,6 +163,8 @@ The Session log owns Agent turns, assistant/tool events, log-only QQ transcript 
 
 The model receives the normal DSH surface plus context snapshots explicitly injected by the plugin. Full QQ history does not become model history merely because it exists in SQLite or the UI transcript.
 
+Memory snapshots use DSH's official `@deepseek-ai/dsh-system-prompt` runtime-context source. DSH's runtime-context projection replaces the previous snapshot when a new one is injected, so a full memory context is not appended as a new ordinary user message on every turn.
+
 ## Inbound state machine
 
 ```text
@@ -215,6 +218,8 @@ recent group history
 
 The current QQ text enters as the normal user prompt; reliable identity is retained in source metadata and the injected context snapshot.
 
+Group snapshots contain group profile/summary/daily/memory, current member profile/pattern/summary/memory, stable group and sender IDs, and recent group history. Direct-chat snapshots contain the member profile/pattern/summary/daily/memory and the stable sender ID.
+
 ## Tool authority
 
 The plugin uses DSH's official:
@@ -257,7 +262,11 @@ Member:
 profile
 pattern
 summary
+daily
+memory
 ```
+
+Direct chats use the member scope. Memory injection can be disabled in Settings; disabling it stops context injection and background reflection but does not delete stored documents. The UI warns that enabled memory may reduce context-cache hit rate and increase input tokens.
 
 Group scope never crosses groups. Member scope may remain continuous across groups under the same Bot.
 
@@ -265,7 +274,7 @@ Reflection is triggered by idle debounce or batch threshold and attributes updat
 
 ## Memory UI
 
-The `QQ Memory` Session utility shows group profile/summary/memory/daily and a member list. Selecting a member opens that member's profile/pattern/summary. Direct Sessions show the corresponding member profile/pattern/summary.
+The `QQ Memory` Session utility shows group profile/summary/memory/daily and a member list. Selecting a member opens that member's profile/pattern/summary. Direct Sessions show the corresponding member profile/pattern/summary. Daily and memory documents are persisted for direct chats even when the current UI presents a smaller member overview.
 
 ## Proactive sending
 
@@ -277,6 +286,29 @@ c2c   -> /v2/users/.../messages
 ```
 
 This sends directly to QQ and does not create another local Agent prompt. The durable outbox remains independent of a Session being live.
+
+## RPC
+
+The Host registers the loopback RPC namespace:
+
+```text
+/qqchat
+```
+
+Main endpoints include:
+
+```text
+status
+auth/start
+auth/poll
+settings/get
+settings/update
+logs/list
+chat/send
+chat/info
+```
+
+Legacy chat and group endpoints remain available for compatibility, but the main DSH navigation no longer depends on them.
 
 ## Persistence boundary
 
@@ -293,9 +325,22 @@ Neither layer replaces the other.
 ## TypeScript build
 
 ```text
-src/*.ts
+src/config.ts
+src/gateway/       QQ API, authorization, Gateway and normalization
+src/session/       Agent bridge and QQ runtime
+src/storage/       SQLite and memory engine
+src/transport/     Client RPC
+src/commands/      QQ command dispatch
+src/shared/        shared augmentations and logging
 client-src/*.cts
 tests/*.test.ts
 ```
 
 The Host is built with `tsc`. The Client is compiled to temporary CJS and then wrapped by `scripts/wrap-client.mjs` as a DSH Client factory. `lib/` is generated output rather than source truth.
+
+## Development and security documentation
+
+- [Development](DEVELOPMENT.md): installation, build, testing, startup and browser verification.
+- [Memory](MEMORY.md): scopes, daily records, reflection and compression contracts.
+- [Security](SECURITY.md): credentials, identity, permissions, logging and isolation.
+- [Development log](devlog.md): investigation notes and design decisions.

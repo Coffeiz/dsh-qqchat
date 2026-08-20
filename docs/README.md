@@ -11,6 +11,7 @@ QQChat 是 DSH 的 out-of-tree QQ 官方 Bot 插件。文档按“如何开发�
 | [ARCHITECTURE.md](ARCHITECTURE.md) | DSH、QQ Gateway、SQLite、Agent、Client 的职责边界 |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | 安装、构建、测试、启动和 UI 验证 |
 | [MEMORY.md](MEMORY.md) | group/member scope、daily、memory、反思和压缩 |
+| [MEDIA_AND_QUOTES.md](MEDIA_AND_QUOTES.md) | 媒体输入、引用消息、附件存储、安全和分阶段实现方案 |
 | [SECURITY.md](SECURITY.md) | 凭据、身份、权限、日志和数据隔离 |
 | [CHANGELOG.md](../CHANGELOG.md) | 面向用户的简短变更记录 |
 | [devlog.md](devlog.md) | 具体排查、决策和踩坑记录 |

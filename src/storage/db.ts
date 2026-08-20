@@ -21,6 +21,10 @@ import type {
   OutboxRow,
   PublicAccountRow,
   QQChatRuntimeSettings,
+  QQAttachmentInput,
+  QQMediaKind,
+  QQQuoteInput,
+  StoredAttachmentSummary,
 } from '../types.js'
 
 const now = (): number => Date.now()
@@ -164,7 +168,32 @@ export class QQChatDatabase {
         quoted_text TEXT,
         mentioned INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL,
-        raw_json TEXT
+        raw_json TEXT,
+        attachments_json TEXT,
+        quote_json TEXT
+      );
+      CREATE TABLE IF NOT EXISTS attachments (
+        id TEXT PRIMARY KEY,
+        account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        source_message_id TEXT,
+        source_file_id TEXT,
+        kind TEXT NOT NULL CHECK(kind IN ('image','audio','video','voice','file')),
+        filename TEXT NOT NULL,
+        content_type TEXT,
+        size_bytes INTEGER NOT NULL DEFAULT 0,
+        local_path TEXT,
+        image_ref_json TEXT,
+        status TEXT NOT NULL DEFAULT 'staged' CHECK(status IN ('staged','attached','expired','deleted','failed')),
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS attachments_source ON attachments(account_id, source_message_id, source_file_id);
+      CREATE TABLE IF NOT EXISTS message_attachments (
+        message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        attachment_id TEXT NOT NULL REFERENCES attachments(id) ON DELETE CASCADE,
+        role TEXT NOT NULL CHECK(role IN ('own','quoted')),
+        ordinal INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(message_id, attachment_id, role)
       );
       CREATE UNIQUE INDEX IF NOT EXISTS messages_platform_unique
         ON messages(account_id, platform_message_id, direction)
@@ -205,6 +234,9 @@ export class QQChatDatabase {
     if (!columns.has('aliases_json')) this.db.exec("ALTER TABLE group_members ADD COLUMN aliases_json TEXT NOT NULL DEFAULT '[]'")
     if (!columns.has('nicknames_json')) this.db.exec("ALTER TABLE group_members ADD COLUMN nicknames_json TEXT NOT NULL DEFAULT '[]'")
     if (!columns.has('message_count')) this.db.exec('ALTER TABLE group_members ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0')
+    const messageColumns = new Set(many<{ name: string }>(this.db.prepare('PRAGMA table_info(messages)').all()).map(column => column.name))
+    if (!messageColumns.has('attachments_json')) this.db.exec('ALTER TABLE messages ADD COLUMN attachments_json TEXT')
+    if (!messageColumns.has('quote_json')) this.db.exec('ALTER TABLE messages ADD COLUMN quote_json TEXT')
     this.db.exec(`UPDATE group_members SET message_count=(
       SELECT COUNT(*) FROM messages WHERE messages.group_id=group_members.group_id AND messages.member_id=group_members.member_id
     ) WHERE message_count=0`)
@@ -449,18 +481,99 @@ export class QQChatDatabase {
     if (input.platformMessageId) {
       const existing = one<{ id: number }>(this.db.prepare(`SELECT id FROM messages WHERE account_id=? AND platform_message_id=? AND direction=?`)
         .get(input.accountId, input.platformMessageId, input.direction))
-      if (existing) return Number(existing.id)
+      if (existing) {
+        this.linkMessageAttachments(Number(existing.id), input.attachments || [])
+        return Number(existing.id)
+      }
     }
     const result = this.db.prepare(`INSERT INTO messages(account_id,platform_message_id,chat_type,group_id,member_id,direction,
-      content,quoted_text,mentioned,created_at,raw_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
+      content,quoted_text,mentioned,created_at,raw_json,attachments_json,quote_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(input.accountId, input.platformMessageId || null, input.chatType, input.groupId || null,
         input.memberId || null, input.direction, input.content || '', input.quotedText || null,
-        input.mentioned ? 1 : 0, input.createdAt || now(), input.raw ? JSON.stringify(input.raw) : null)
+        input.mentioned ? 1 : 0, input.createdAt || now(), input.raw ? JSON.stringify(input.raw) : null,
+        input.attachments?.length ? JSON.stringify(input.attachments) : null, input.quote ? JSON.stringify(input.quote) : null)
+    const messageId = Number(result.lastInsertRowid)
+    this.linkMessageAttachments(messageId, input.attachments || [])
     if (input.chatType === 'group' && input.groupId && input.memberId) {
       this.db.prepare('UPDATE group_members SET message_count=message_count+1 WHERE group_id=? AND member_id=?')
         .run(input.groupId, input.memberId)
     }
-    return Number(result.lastInsertRowid)
+    return messageId
+  }
+
+  private linkMessageAttachments(messageId: number, attachments: StoredAttachmentSummary[]): void {
+    for (const [ordinal, attachment] of attachments.entries()) {
+      this.db.prepare(`INSERT OR IGNORE INTO message_attachments(message_id,attachment_id,role,ordinal) VALUES(?,?,?,?)`)
+        .run(messageId, attachment.id, attachment.quoted ? 'quoted' : 'own', ordinal)
+      this.db.prepare("UPDATE attachments SET status='attached' WHERE id=?").run(attachment.id)
+    }
+  }
+
+  saveAttachment(input: {
+    id: string
+    accountId: number
+    sourceMessageId?: string
+    sourceFileId?: string
+    kind: QQMediaKind
+    filename: string
+    contentType?: string
+    sizeBytes: number
+    localPath?: string
+    imageRef?: StoredAttachmentSummary['imageRef']
+    expiresAt?: number
+  }): void {
+    this.db.prepare(`INSERT OR REPLACE INTO attachments
+      (id,account_id,source_message_id,source_file_id,kind,filename,content_type,size_bytes,local_path,image_ref_json,status,created_at,expires_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?, ?,?)`).run(
+      input.id, input.accountId, input.sourceMessageId || null, input.sourceFileId || null, input.kind,
+      input.filename, input.contentType || null, input.sizeBytes, input.localPath || null,
+      input.imageRef ? JSON.stringify(input.imageRef) : null, 'staged', now(), input.expiresAt || null,
+    )
+  }
+
+  attachmentById(id: string): StoredAttachmentSummary | undefined {
+    const row = one<{ id: string; kind: QQMediaKind; filename: string; content_type: string | null; size_bytes: number; local_path: string | null; image_ref_json: string | null }>(
+      this.db.prepare('SELECT id,kind,filename,content_type,size_bytes,local_path,image_ref_json FROM attachments WHERE id=?').get(id),
+    )
+    if (!row) return undefined
+    let imageRef: StoredAttachmentSummary['imageRef'] | undefined
+    try { imageRef = row.image_ref_json ? JSON.parse(row.image_ref_json) : undefined } catch {}
+    return { id: row.id, kind: row.kind, filename: row.filename, contentType: row.content_type || undefined,
+      sizeBytes: Number(row.size_bytes || 0), quoted: false, localPath: row.local_path || undefined, imageRef }
+  }
+
+  findReusableAttachment(accountId: number, sourceMessageId: string, sourceFileId?: string, kind?: QQMediaKind): StoredAttachmentSummary | undefined {
+    const row = one<{ id: string; kind: QQMediaKind; filename: string; content_type: string | null; size_bytes: number; local_path: string | null; image_ref_json: string | null }>(
+      this.db.prepare(`SELECT id,kind,filename,content_type,size_bytes,local_path,image_ref_json FROM attachments
+        WHERE account_id=? AND source_message_id=? AND status IN ('staged','attached')
+          AND (? IS NULL OR source_file_id=? ) AND (? IS NULL OR kind=? ) AND local_path IS NOT NULL
+        ORDER BY created_at DESC LIMIT 1`).get(accountId, sourceMessageId, sourceFileId || null, sourceFileId || null, kind || null, kind || null),
+    )
+    if (!row) return undefined
+    let imageRef: StoredAttachmentSummary['imageRef'] | undefined
+    try { imageRef = row.image_ref_json ? JSON.parse(row.image_ref_json) : undefined } catch {}
+    return { id: row.id, kind: row.kind, filename: row.filename, contentType: row.content_type || undefined,
+      sizeBytes: Number(row.size_bytes || 0), quoted: false, localPath: row.local_path || undefined, imageRef }
+  }
+
+  extendAttachment(id: string, expiresAt: number): void {
+    this.db.prepare("UPDATE attachments SET expires_at=CASE WHEN expires_at IS NULL OR expires_at<? THEN ? ELSE expires_at END, status='attached' WHERE id=?")
+      .run(expiresAt, expiresAt, id)
+  }
+
+  expireAttachments(before: number): number {
+    const result = this.db.prepare("UPDATE attachments SET status='expired' WHERE expires_at IS NOT NULL AND expires_at<? AND status IN ('staged','attached')").run(before)
+    return Number(result.changes || 0)
+  }
+
+  expiredAttachmentPaths(before: number): string[] {
+    return many<{ local_path: string | null }>(this.db.prepare(
+      "SELECT local_path FROM attachments WHERE expires_at IS NOT NULL AND expires_at<? AND status='expired'",
+    ).all(before)).map(row => row.local_path).filter((value): value is string => Boolean(value))
+  }
+
+  markAttachmentDeleted(path: string): void {
+    this.db.prepare("UPDATE attachments SET status='deleted',local_path=NULL WHERE local_path=?").run(path)
   }
 
   listMessages(groupId: number, limit = 100): MessageRow[] {

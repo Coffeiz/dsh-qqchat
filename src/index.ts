@@ -9,6 +9,7 @@ import { resolveConfig } from './config.js'
 import { QQChatDatabase } from './storage/db.js'
 import { QQChatLogger } from './shared/logging.js'
 import { MemoryEngine } from './storage/memory.js'
+import { QQMediaStore } from './media/store.js'
 import { QQApiClient } from './gateway/api.js'
 import { QQBindService } from './gateway/auth.js'
 import { createQQChatRpc } from './transport/rpc.js'
@@ -27,8 +28,9 @@ export function apply(ctx: Context, inputConfig: QQChatConfigInput = {}): void {
   const api = new QQApiClient(db, config)
   const auth = new QQBindService(db, config)
   const memory = new MemoryEngine(ctx, db, config, logger)
+  const media = new QQMediaStore(db, ctx)
   const bridge = new DshQQBridge(ctx, db, memory, config, logger)
-  const runtime = new QQChatRuntime(ctx, db, api, auth, memory, bridge, config, logger)
+  const runtime = new QQChatRuntime(ctx, db, api, auth, memory, bridge, config, logger, media)
 
   ctx.connection.rpc.handle('/qqchat', createQQChatRpc(runtime), { authority: 'loopback' })
   ctx.effect(() => {

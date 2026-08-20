@@ -1,5 +1,21 @@
 import { React, h, useEffect, useState, call, Modal, Button, time } from './shared.cjs'
-import type { ChatInfo, ChatMember, QQEventData, QQNode, Rpc, SessionUtilityProps } from './shared.cjs'
+import type { ChatInfo, ChatMember, QQAttachmentData, QQEventData, QQNode, Rpc, SessionUtilityProps } from './shared.cjs'
+
+function formatBytes(value: number): string {
+  if (!value || value < 1024) return `${value || 0} B`
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+  return `${(value / 1024 / 1024).toFixed(1)} MB`
+}
+
+function AttachmentCards({ attachments }: { attachments?: QQAttachmentData[] }) {
+  if (!attachments?.length) return null
+  return h('div', { className: 'qqMediaList' }, ...attachments.map(attachment =>
+    h('div', { className: 'qqMediaCard', key: `${attachment.id}:${attachment.quoted ? 'quote' : 'own'}` },
+      h('span', { className: 'qqMediaKind' }, attachment.kind === 'image' ? '图片' : attachment.kind === 'video' ? '视频' : attachment.kind === 'voice' || attachment.kind === 'audio' ? '语音' : '文件'),
+      h('span', { className: 'qqMediaName' }, attachment.filename),
+      h('span', { className: 'qqMediaSize' }, formatBytes(attachment.sizeBytes)),
+      attachment.quoted ? h('span', { className: 'qqMediaQuoted' }, '引用') : null)))
+}
 
 export function QQTranscriptNode({ node }: { node: QQNode }) {
   const data = node.data
@@ -9,8 +25,11 @@ export function QQTranscriptNode({ node }: { node: QQNode }) {
       h('div', { className: 'qqTranscriptMeta' }, data.senderName || (outbound ? 'Owner' : 'QQ 用户'), ' · ', time(data.createdAt)),
       data.quotedText && h('div', { className: 'qqQuote', title: data.quotedText },
         h('div', { className: 'qqQuoteLabel' }, '引用消息'),
-        h('div', { className: 'qqQuoteText' }, data.quotedText)),
-      h('div', { className: 'qqBubble' }, data.content)))
+        h('div', { className: 'qqQuoteText' }, data.quotedText),
+        data.quote?.senderName ? h('div', { className: 'qqQuoteSender' }, data.quote.senderName) : null,
+        h(AttachmentCards, { attachments: data.quote?.attachments })),
+      h('div', { className: 'qqBubble' }, data.content),
+      h(AttachmentCards, { attachments: data.attachments })))
 }
 
 export function MemoryCard({ title, value }: { title: string; value: string }) {

@@ -211,7 +211,32 @@ function publicMessage(row: MessageRow) {
     mentioned: row.mentioned === 1, createdAt: Number(row.created_at),
     senderId: row.platform_user_id || (row.direction === 'outbound' ? 'BOT' : ''),
     senderName: row.display_name || (row.direction === 'outbound' ? 'DSH Agent' : ''),
+    attachments: parseAttachments(row.attachments_json),
+    quote: parseQuote(row.quote_json),
   }
+}
+
+function parseAttachments(value: string | null): Array<Record<string, unknown>> {
+  if (!value) return []
+  try {
+    const parsed = JSON.parse(value)
+    if (!Array.isArray(parsed)) return []
+    return parsed.map(item => {
+      if (!item || typeof item !== 'object') return null
+      const { localPath: _localPath, ...publicRecord } = item as Record<string, unknown>
+      return publicRecord
+    }).filter((item): item is Record<string, unknown> => Boolean(item))
+  } catch { return [] }
+}
+
+function parseQuote(value: string | null): Record<string, unknown> | null {
+  if (!value) return null
+  try {
+    const parsed = JSON.parse(value)
+    if (!parsed || typeof parsed !== 'object') return null
+    const record = parsed as Record<string, unknown>
+    return { ...record, attachments: Array.isArray(record.attachments) ? record.attachments : [] }
+  } catch { return null }
 }
 
 function normalizeMemory(memory: MemoryDocuments) {
