@@ -25,21 +25,25 @@
 
 ## 安装
 
-### 新建一个 QQ Chat profile
+插件使用 DSH 官方的 `plugin` 命令安装和管理。安装、更新或移除插件后，需要重启对应的 DSH profile 才会生效。
+
+### 正式发布后：新建一个 QQ Chat profile
 
 ```bash
 npx @deepseek-ai/dsh plugin --profile qqchat add @deepseek-ai/dsh-web-app dsh-qqchat
 npx @deepseek-ai/dsh --profile qqchat
 ```
 
-### 安装到已有的 Web profile
+### 正式发布后：安装到已有的 Web profile
 
 ```bash
 npx @deepseek-ai/dsh plugin --profile web add dsh-qqchat
 npx @deepseek-ai/dsh --profile web
 ```
 
-当前开发分支也可以直接从 GitHub 安装：
+### 当前开发分支：从 GitHub 安装
+
+当前版本尚未作为 npm 包正式发布，可以直接安装 GitHub 分支：
 
 ```bash
 npx @deepseek-ai/dsh plugin --profile qqchat add @deepseek-ai/dsh-web-app "git+ssh://git@github.com/Coffeiz/dsh-qqchat.git#agent/typescript-migration"
