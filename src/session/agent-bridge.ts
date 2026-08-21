@@ -134,7 +134,7 @@ export class DshQQBridge {
     return sessionId
   }
 
-  async reply(message: QQNormalizedMessage, group: GroupRow | undefined, member: MemberRow, attachments: StoredAttachmentSummary[] = []): Promise<string> {
+  async reply(message: QQNormalizedMessage, group: GroupRow | undefined, member: MemberRow, attachments: StoredAttachmentSummary[] = [], onTextDelta?: (delta: string) => void): Promise<string> {
     if (message.chatType === 'group' && !group) throw new Error('群消息缺少群上下文')
     const key = message.chatType === 'group' ? `g:${group!.id}` : `u:${member.id}`
     return this.serial(key, async () => {
@@ -186,7 +186,7 @@ export class DshQQBridge {
         content: currentContent,
       })
 
-      this.pending.set(String(sessionId), { text: '' })
+      this.pending.set(String(sessionId), { text: '', onTextDelta })
       this.activeAttachments.set(String(sessionId), new Set(attachments.map(item => item.id)))
       const settings = this.db.runtimeSettings(defaultRuntimeSettings(this.config))
       this.activeMediaReadable.set(String(sessionId), message.chatType !== 'group'
@@ -223,6 +223,12 @@ export class DshQQBridge {
       if (!pending) return
       const text = extractText(event.data.message.content)
       if (text.trim()) pending.text = text
+      return
+    }
+    if (event.type === 'assistant/chunk') {
+      const pending = this.pending.get(id)
+      const chunk = event.data.chunk
+      if (pending?.onTextDelta && chunk.type === 'text-delta' && chunk.text) pending.onTextDelta(chunk.text)
       return
     }
     if (event.type === 'request/header') {

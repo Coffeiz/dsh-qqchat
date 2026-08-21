@@ -304,6 +304,7 @@ function asSettingsPatch(value: unknown): QQChatRuntimeSettingsPatch {
   }
   if (record.groupReplyFormat === 'smart' || record.groupReplyFormat === 'markdown' || record.groupReplyFormat === 'compat') patch.groupReplyFormat = record.groupReplyFormat
   if (record.directReplyFormat === 'smart' || record.directReplyFormat === 'markdown' || record.directReplyFormat === 'compat') patch.directReplyFormat = record.directReplyFormat
+  if (typeof record.directStreamingEnabled === 'boolean') patch.directStreamingEnabled = record.directStreamingEnabled
   if (typeof record.groupMembersCanUseTools === 'boolean') patch.groupMembersCanUseTools = record.groupMembersCanUseTools
   if (typeof record.groupMembersCanReceiveMedia === 'boolean') patch.groupMembersCanReceiveMedia = record.groupMembersCanReceiveMedia
   if (typeof record.groupMembersCanReadMedia === 'boolean') patch.groupMembersCanReadMedia = record.groupMembersCanReadMedia

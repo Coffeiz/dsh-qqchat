@@ -59,6 +59,7 @@ export interface QQChatRuntimeSettings {
   groupReceiveMode: GroupReceiveMode
   groupReplyFormat: ReplyFormat
   directReplyFormat: ReplyFormat
+  directStreamingEnabled: boolean
   groupMembersCanUseTools: boolean
   groupMembersCanReceiveMedia: boolean
   groupMembersCanReadMedia: boolean
@@ -70,6 +71,7 @@ export interface QQChatRuntimeSettingsPatch {
   groupReceiveMode?: GroupReceiveMode
   groupReplyFormat?: ReplyFormat
   directReplyFormat?: ReplyFormat
+  directStreamingEnabled?: boolean
   groupMembersCanUseTools?: boolean
   groupMembersCanReceiveMedia?: boolean
   groupMembersCanReadMedia?: boolean
@@ -397,6 +399,7 @@ export interface ModelRoute {
 
 export interface PendingReply {
   text: string
+  onTextDelta?: (delta: string) => void
 }
 
 export interface ReflectionGroupUpdate {

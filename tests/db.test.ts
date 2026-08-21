@@ -64,6 +64,7 @@ test('runtime settings persist independently from static config defaults', () =>
     groupReceiveMode: 'mention' as const,
     groupReplyFormat: 'smart' as const,
     directReplyFormat: 'smart' as const,
+    directStreamingEnabled: true,
     groupMembersCanUseTools: false,
     groupMembersCanReceiveMedia: true,
     groupMembersCanReadMedia: false,
@@ -73,6 +74,7 @@ test('runtime settings persist independently from static config defaults', () =>
   db.setSetting('groupReceiveMode', 'silent')
   db.setSetting('groupReplyFormat', 'compat')
   db.setSetting('groupMembersCanUseTools', true)
+  db.setSetting('directStreamingEnabled', false)
   db.setSetting('groupMembersCanReceiveMedia', true)
   db.setSetting('groupMembersCanReadMedia', true)
   db.setSetting('ownerUserId', 'owner-openid')
@@ -82,6 +84,7 @@ test('runtime settings persist independently from static config defaults', () =>
     groupReceiveMode: 'silent',
     groupReplyFormat: 'compat',
     directReplyFormat: 'smart',
+    directStreamingEnabled: false,
     groupMembersCanUseTools: true,
     groupMembersCanReceiveMedia: true,
     groupMembersCanReadMedia: true,

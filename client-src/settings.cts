@@ -149,7 +149,20 @@ export function QQSettings({ rpc }: { rpc: Rpc }) {
       h('div', { className: 'qqControl' }, groupReplyPicker)),
     h('div', { className: 'qqSetting' },
       h('div', null, h('div', { className: 'qqSettingTitle' }, '私聊消息兼容格式'), h('div', { className: 'qqSettingHelp' }, '仅控制发送到 QQ 私聊时使用的消息格式。')),
-      h('div', { className: 'qqControl' }, directReplyPicker)))
+      h('div', { className: 'qqControl' }, directReplyPicker)),
+    h('div', { className: 'qqSetting' },
+      h('label', { className: 'qqCheckRow' },
+        h('input', {
+          type: 'checkbox',
+          checked: settings.directStreamingEnabled,
+          onChange: (event: import('react').ChangeEvent<HTMLInputElement>) => void patch({ directStreamingEnabled: event.target.checked }),
+        }),
+        h('span', null,
+          h('div', { className: 'qqSettingTitle' }, '私聊流式回复'),
+          h('div', { className: 'qqSettingHelp' }, settings.directStreamingEnabled
+            ? '使用 QQ 官方流式接口逐步更新私聊回复；部分 QQ 客户端可能看不到流式效果。'
+            : '使用普通一次性消息发送，兼容性更好。'))))
+  )
   const memoryGroup = h('div', { className: 'qqSettingsGroup' },
     h('h3', null, '记忆系统'),
     h('div', { className: 'qqSetting' },

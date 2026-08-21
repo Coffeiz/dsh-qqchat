@@ -64,6 +64,7 @@ export class QQChatRuntime {
       if (!isReplyFormat(patch.directReplyFormat)) throw new Error('无效的私聊消息兼容格式')
       this.db.setSetting('directReplyFormat', patch.directReplyFormat)
     }
+    if (patch.directStreamingEnabled !== undefined) this.db.setSetting('directStreamingEnabled', Boolean(patch.directStreamingEnabled))
     if (patch.groupMembersCanUseTools !== undefined) this.db.setSetting('groupMembersCanUseTools', Boolean(patch.groupMembersCanUseTools))
     if (patch.groupMembersCanReceiveMedia !== undefined) this.db.setSetting('groupMembersCanReceiveMedia', Boolean(patch.groupMembersCanReceiveMedia))
     if (patch.groupMembersCanReadMedia !== undefined) this.db.setSetting('groupMembersCanReadMedia', Boolean(patch.groupMembersCanReadMedia))
@@ -214,10 +215,26 @@ export class QQChatRuntime {
       // Keep the incoming QQ message visible in Web independently from the
       // notice-shaped message used to drive the Agent turn.
       await this.bridge.recordTranscript(displayEvent, row, true)
-      const reply = await this.bridge.reply(message, group, member, storedAttachments)
-      await this.api.sendReplyWithActiveFallback(account, message.chatType === 'group' ? message.groupOpenid! : message.senderId, reply, {
-        group: message.chatType === 'group', messageId: message.messageId || null, format: message.chatType === 'group' ? settings.groupReplyFormat : settings.directReplyFormat,
-      })
+      const targetId = message.chatType === 'group' ? message.groupOpenid! : message.senderId
+      const sendOptions = {
+        group: message.chatType === 'group', messageId: message.messageId || null,
+        format: message.chatType === 'group' ? settings.groupReplyFormat : settings.directReplyFormat,
+      } as const
+      const stream = message.chatType === 'c2c' && settings.directStreamingEnabled
+        ? this.api.createPrivateTextStream(account, targetId, sendOptions)
+        : undefined
+      const reply = await this.bridge.reply(message, group, member, storedAttachments, stream ? delta => stream.push(delta) : undefined)
+      if (stream) {
+        try {
+          await stream.finish(reply)
+        } catch (error) {
+          this.logger.warn?.(`[dsh-qqchat] QQ private stream failed, falling back to normal send: ${error instanceof Error ? error.message : String(error)}`)
+          if (!stream.hasSent()) await this.api.sendReplyWithActiveFallback(account, targetId, reply, sendOptions)
+          else throw error
+        }
+      } else {
+        await this.api.sendReplyWithActiveFallback(account, targetId, reply, sendOptions)
+      }
       this.db.insertMessage({
         accountId: message.accountId, chatType: message.chatType, groupId: group?.id,
         memberId: message.chatType === 'c2c' ? member.id : undefined, direction: 'outbound', content: reply, mentioned: false,

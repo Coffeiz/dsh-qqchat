@@ -359,6 +359,7 @@ export class QQChatDatabase {
       groupReceiveMode: this.getSetting('groupReceiveMode', defaults.groupReceiveMode),
       groupReplyFormat: this.getSetting('groupReplyFormat', defaults.groupReplyFormat),
       directReplyFormat: this.getSetting('directReplyFormat', this.getSetting('replyFormat', defaults.directReplyFormat)),
+      directStreamingEnabled: this.getSetting('directStreamingEnabled', defaults.directStreamingEnabled),
       groupMembersCanUseTools: this.getSetting('groupMembersCanUseTools', defaults.groupMembersCanUseTools),
       groupMembersCanReceiveMedia: this.getSetting('groupMembersCanReceiveMedia', defaults.groupMembersCanReceiveMedia),
       groupMembersCanReadMedia: this.getSetting('groupMembersCanReadMedia', defaults.groupMembersCanReadMedia),

@@ -29,6 +29,24 @@ interface QQSendBody {
   markdown?: { content: string }
 }
 
+interface QQStreamBody {
+  input_mode: 'replace'
+  input_state: 1 | 10
+  index: number
+  content_type: 'text' | 'markdown'
+  content_raw: string
+  msg_seq: number
+  event_id?: string
+  msg_id?: string
+  stream_msg_id?: string
+}
+
+export interface QQPrivateTextStream {
+  push(delta: string): void
+  finish(text: string): Promise<void>
+  hasSent(): boolean
+}
+
 export class QQApiClient {
   private readonly tokens = new Map<number, CachedToken>()
   private readonly sequences = new Map<string, number>()
@@ -138,6 +156,84 @@ export class QQApiClient {
     } catch (error) {
       if (!options.messageId) throw error
       return this.sendText(account, targetId, text, { ...options, messageId: null })
+    }
+  }
+
+  createPrivateTextStream(
+    account: AccountRow,
+    targetId: string,
+    { messageId = null, format = this.config.replyFormat }: QQSendOptions = {},
+  ): QQPrivateTextStream {
+    const path = `/v2/users/${encodeURIComponent(targetId)}/stream_messages`
+    const msgSeq = this.nextSeq(messageId)
+    const contentType = format === 'markdown' ? 'markdown' : 'text'
+    let fullText = ''
+    let streamMessageId: string | undefined
+    let index = 0
+    let sent = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let chain = Promise.resolve()
+    let finished = false
+    let lastSentText = ''
+
+    const enqueue = (inputState: 1 | 10, content: string): Promise<void> => {
+      const body: QQStreamBody = {
+        input_mode: 'replace', input_state: inputState, index: index++, content_type: contentType,
+        content_raw: content, msg_seq: msgSeq,
+        ...(messageId ? { msg_id: messageId, event_id: messageId } : {}),
+        ...(streamMessageId ? { stream_msg_id: streamMessageId } : {}),
+      }
+      chain = chain.then(async () => {
+        let attempt = 0
+        while (true) {
+          try {
+            const result = await this.request<{ stream_msg_id?: unknown; id?: unknown }>(account, 'POST', path, body)
+            sent = true
+            if (!streamMessageId) {
+              const id = typeof result.stream_msg_id === 'string' ? result.stream_msg_id : result.id
+              if (typeof id === 'string' && id) streamMessageId = id
+            }
+            lastSentText = content
+            return
+          } catch (error) {
+            const message = String(error)
+            const rateLimited = /HTTP 429|50002|rate limit/i.test(message)
+            if (!rateLimited || attempt >= 3) throw error
+            const delay = 1000 * (2 ** attempt++)
+            await new Promise(resolve => setTimeout(resolve, delay))
+          }
+        }
+      })
+      return chain
+    }
+
+    const flush = (inputState: 1 | 10 = 1): Promise<void> => {
+      timer = undefined
+      if (!fullText && inputState !== 10) return chain
+      if (inputState !== 10 && fullText === lastSentText) return chain
+      return enqueue(inputState, fullText)
+    }
+
+    return {
+      push: delta => {
+        if (!delta || finished) return
+        fullText += delta
+        if (!timer) {
+          timer = setTimeout(() => { void flush().catch(() => {}) }, 500)
+          timer.unref?.()
+        }
+      },
+      finish: async text => {
+        finished = true
+        if (timer) clearTimeout(timer)
+        timer = undefined
+        fullText = text
+        await flush(1)
+        await chain
+        await flush(10)
+        await chain
+      },
+      hasSent: () => sent,
     }
   }
 }

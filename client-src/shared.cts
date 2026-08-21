@@ -38,7 +38,7 @@ export interface Ctx {
   slots: SlotRegistry
 }
 export interface Account { id: number; appId: string; enabled: boolean; gatewayStatus: string; gatewayLastError?: string | null }
-export interface Settings { memoryEnabled: boolean; groupReceiveMode: GroupReceiveMode; groupReplyFormat: ReplyFormat; directReplyFormat: ReplyFormat; groupMembersCanUseTools: boolean; groupMembersCanReceiveMedia: boolean; groupMembersCanReadMedia: boolean; ownerUserId: string }
+export interface Settings { memoryEnabled: boolean; groupReceiveMode: GroupReceiveMode; groupReplyFormat: ReplyFormat; directReplyFormat: ReplyFormat; directStreamingEnabled: boolean; groupMembersCanUseTools: boolean; groupMembersCanReceiveMedia: boolean; groupMembersCanReadMedia: boolean; ownerUserId: string }
 export interface KnownMember { id: number; platformUserId: string; displayName: string; lastSeenAt: number }
 export interface ChatItem { chatType: ChatType; rowId: number; platformId: string; displayName: string; dshSessionId: string | null; lastMessageAt: number | null; messageCount: number }
 export interface Memory { profile: string; summary: string; daily: string; memory: string; pattern: string }

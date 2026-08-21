@@ -31,6 +31,7 @@
 | QR connection | Binds an official QQ Bot from **Settings -> QQ Chat** | Cancel the binding and scan again when needed |
 | Group receive modes | Auto reply, Mention only or Silent record | Silent record stores messages without waking the Agent |
 | Message formats | Smart, Markdown or Plain compatibility | Group and direct-chat formats are configured separately; groups default to Plain compatibility |
+| Direct-chat streaming | Optionally uses QQ's official streaming message API | Can be disabled in Settings; failed streams fall back automatically |
 | Quotes and mentions | Preserves quoted messages and resolves QQ mentions to display names | Stable IDs remain in metadata |
 | Memory system | Stores group, member and direct-user memory | Can be disabled; disabling does not delete existing memory |
 | Memory reflection | Converts recent daily notes into long-term memory | Runs asynchronously after idle or batch thresholds |
