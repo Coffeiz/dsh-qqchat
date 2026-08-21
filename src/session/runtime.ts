@@ -160,6 +160,27 @@ export class QQChatRuntime {
     if (account?.enabled) this.startGateway(account)
   }
 
+  async connectManual(appId: string, appSecret: string, sandbox = this.config.sandbox): Promise<AccountRow> {
+    const normalizedAppId = appId.trim()
+    const normalizedSecret = appSecret.trim()
+    if (!normalizedAppId || !normalizedSecret) throw new Error('AppID 和 AppSecret 不能为空')
+    if (normalizedAppId.length > 256 || normalizedSecret.length > 512) throw new Error('QQ Bot 凭据长度无效')
+    const existing = this.db.accountByAppId(normalizedAppId)
+    const candidate = {
+      ...(existing || { id: 0, bot_user_id: null, enabled: 1 as const, gateway_status: 'offline' as const, gateway_last_error: null, created_at: 0, updated_at: 0 }),
+      app_id: normalizedAppId, app_secret: normalizedSecret, sandbox: sandbox ? 1 as const : 0 as const,
+    }
+    this.api.clearToken(Number(candidate.id))
+    try {
+      await this.api.gatewayUrl(candidate)
+    } catch {
+      throw new Error('QQ Bot 凭据验证失败，请检查 AppID、AppSecret 和沙箱环境设置')
+    }
+    const account = this.db.upsertAccount(normalizedAppId, normalizedSecret, sandbox)
+    await this.restartGateway(Number(account.id))
+    return account
+  }
+
   private async onIncoming(message: QQNormalizedMessage): Promise<void> {
     const account = this.db.accountById(message.accountId)
     if (!account || !account.enabled) return

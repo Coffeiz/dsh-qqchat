@@ -46,6 +46,15 @@ export function createQQChatRpc(runtime: QQChatRuntime): ConnectionRpcHandler {
           }
           return ok(result)
         }
+        case 'account/manual-connect': {
+          const record = asRecord(payload)
+          const account = await runtime.connectManual(
+            requireString(payload, 'appId'),
+            requireString(payload, 'appSecret'),
+            record?.sandbox === true,
+          )
+          return ok({ account: publicAccount(account) })
+        }
         case 'account/reconnect': {
           const id = requireNumber(payload, 'accountId')
           runtime.db.setAccountEnabled(id, true)

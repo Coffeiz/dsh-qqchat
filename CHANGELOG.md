@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+### 连接方式
+
+- 增加手动配置 QQ Bot 功能，可在设置页使用 AppID 和 AppSecret 连接，适用于无手机、服务器和扫码失败场景。
+- 手动配置会先验证 QQ 凭据，验证成功后才保存账号并启动 Gateway；AppSecret 不会返回 Client 或写入日志。
+
 ### 架构与运行时
 
 - 将 QQ Chat 插件迁移到 TypeScript，补充 Host、Client、构建产物和类型声明的独立配置。
