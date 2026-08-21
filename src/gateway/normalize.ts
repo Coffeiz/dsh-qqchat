@@ -74,7 +74,7 @@ export function normalizeQQDispatch(
     return {
       platform: 'qq', accountId, chatType: 'c2c', chatId: senderId,
       senderId, senderName: authorName(data.author), groupOpenid: undefined,
-      messageId: String(data.id || ''), text: String(data.content || '').trim(),
+      messageId: String(data.id || ''), msgIdx: messageSceneIndex(data), refMsgIdx: messageReferenceIndex(data), text: String(data.content || '').trim(),
       quotedText: extractQuotedText(data), quote: extractQuote(data), attachments: extractAttachments(data), mentioned: true,
       botMentionId: '', raw: data,
     }
@@ -86,7 +86,7 @@ export function normalizeQQDispatch(
     return {
       platform: 'qq', accountId, chatType: 'group', chatId: groupOpenid,
       senderId, senderName: authorName(data.author), groupOpenid,
-      messageId: String(data.id || ''), text: String(data.content || '').trim(),
+      messageId: String(data.id || ''), msgIdx: messageSceneIndex(data), refMsgIdx: messageReferenceIndex(data), text: String(data.content || '').trim(),
       quotedText: extractQuotedText(data), quote: extractQuote(data), attachments: extractAttachments(data), mentioned: messageMentionsBot(data, eventType),
       botMentionId: botMentionId(data, eventType), raw: data,
     }
@@ -106,7 +106,7 @@ function extractQuotedText(data: QQDispatchData): string {
   const elements = data.msg_elements || []
   if (elements.length === 0) return ''
   const ext = Array.isArray(data.message_scene?.ext) ? data.message_scene.ext : []
-  const referenceIndex = sceneValue(ext, 'ref_msg_idx') || sceneValue(ext, 'msg_ref_idx')
+  const referenceIndex = messageReferenceIndex(data)
   const ownIndex = sceneValue(ext, 'msg_idx')
   const element = referenceIndex
     ? elements.find(item => String(item.msg_idx || '') === referenceIndex)
@@ -121,7 +121,7 @@ function extractQuote(data: QQDispatchData): QQQuoteInput | undefined {
   let record = reference && typeof reference === 'object' ? reference : undefined
   if (!record && Array.isArray(data.msg_elements)) {
     const ext = Array.isArray(data.message_scene?.ext) ? data.message_scene.ext : []
-    const referenceIndex = sceneValue(ext, 'ref_msg_idx') || sceneValue(ext, 'msg_ref_idx')
+    const referenceIndex = messageReferenceIndex(data)
     const element = referenceIndex ? data.msg_elements.find(item => String(item.msg_idx || '') === referenceIndex) : undefined
     if (element) record = element
   }
@@ -132,6 +132,16 @@ function extractQuote(data: QQDispatchData): QQQuoteInput | undefined {
   const attachments = extractAttachments(record as QQDispatchData | undefined, true)
   if (!text && !messageId && !senderId && attachments.length === 0) return undefined
   return { messageId, senderId, senderName, text, attachments }
+}
+
+function messageSceneIndex(data: QQDispatchData): string | undefined {
+  const ext = Array.isArray(data.message_scene?.ext) ? data.message_scene.ext : []
+  return sceneValue(ext, 'msg_idx') || String(data.id || '').trim() || undefined
+}
+
+function messageReferenceIndex(data: QQDispatchData): string | undefined {
+  const ext = Array.isArray(data.message_scene?.ext) ? data.message_scene.ext : []
+  return sceneValue(ext, 'ref_msg_idx') || sceneValue(ext, 'msg_ref_idx') || undefined
 }
 
 function extractAttachments(data: QQDispatchData | undefined, quoted = false): QQAttachmentInput[] {

@@ -23,6 +23,17 @@ export class QQMediaStore {
     let messageBytes = 0
     for (const input of attachments.slice(0, 12)) {
       try {
+        if (input.attachmentId) {
+          const existingById = this.db.attachmentById(input.attachmentId)
+          if (existingById?.localPath) {
+            try {
+              await access(existingById.localPath)
+              this.db.extendAttachment(existingById.id, Date.now() + RETENTION_MS)
+              result.push({ ...existingById, quoted: Boolean(input.quoted) })
+              continue
+            } catch {}
+          }
+        }
         const reusable = this.db.findReusableAttachment(accountId, messageId, input.platformFileId, input.kind)
         if (reusable?.localPath) {
           try {
@@ -60,6 +71,7 @@ export class QQMediaStore {
 
   async cleanup(): Promise<void> {
     const cutoff = Date.now()
+    this.db.expireQuoteIndex(cutoff)
     this.db.expireAttachments(cutoff)
     for (const path of this.db.expiredAttachmentPaths(cutoff)) {
       try {

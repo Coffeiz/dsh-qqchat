@@ -11,9 +11,11 @@ import { QQGateway } from '../gateway/gateway.js'
 import { renderQQMentionNames } from '../gateway/normalize.js'
 import { QQMediaStore } from '../media/store.js'
 import type {
-  AccountRow, ChatTargetRow, ChatType, GroupReceiveMode, GroupRow, MemberRow, QQChatConfig,
+  AccountRow, ChatTargetRow, ChatType, GroupReceiveMode, GroupRow, MemberRow, QQAttachmentInput, QQChatConfig,
   QQChatDisplayEvent, QQChatRuntimeSettings, QQChatRuntimeSettingsPatch, QQNormalizedMessage, QQQuoteInput, ReplyFormat, StoredAttachmentSummary,
 } from '../types.js'
+
+const QUOTE_INDEX_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 export class QQChatRuntime {
   readonly gateways = new Map<number, QQGateway>()
@@ -173,6 +175,7 @@ export class QQChatRuntime {
       if (group.enabled !== 1 || group.read_enabled !== 1) return
       shouldReply = shouldReplyToGroup(mode, group, message.mentioned)
     }
+    mergeIndexedQuote(message, this.db.quoteIndex(message.accountId, message.chatType, message.chatId, message.refMsgIdx || ''))
     message.text = renderQQMentionNames(message.text, message.raw, id => {
       const mentionedMember = this.db.memberByPlatform(message.accountId, id)
       return mentionedMember?.display_name || undefined
@@ -188,13 +191,20 @@ export class QQChatRuntime {
       ? await this.media.ingest(message.accountId, message.quote.messageId || message.messageId, message.quote.attachments)
       : []
     const storedAttachments = dedupeAttachments([...ownAttachments, ...quotedAttachments])
-    const safeQuote = message.quote ? sanitizeQuote(message.quote, acceptGroupMedia) : undefined
+    const safeQuote = message.quote ? sanitizeQuote(message.quote, acceptGroupMedia, storedAttachments) : undefined
 
     const messageDbId = this.db.insertMessage({
       accountId: message.accountId, platformMessageId: message.messageId, chatType: message.chatType, groupId: group?.id,
       memberId: member.id, direction: 'inbound', content: message.text, quotedText: message.quotedText,
       attachments: storedAttachments, quote: safeQuote,
       mentioned: message.mentioned, raw: message.raw,
+    })
+    const msgIdx = message.msgIdx || message.messageId
+    if (msgIdx) this.db.saveQuoteIndex({
+      accountId: message.accountId, chatType: message.chatType, chatId: message.chatId,
+      msgIdx, platformMessageId: message.messageId || undefined,
+      senderId: message.senderId, senderName: message.senderName, content: message.text,
+      attachments: indexAttachments(message.attachments, storedAttachments), createdAt: Date.now(), expiresAt: Date.now() + QUOTE_INDEX_TTL_MS,
     })
     const row = message.chatType === 'group' ? group! : member
     const displayEvent: QQChatDisplayEvent = {
@@ -272,6 +282,7 @@ export class QQChatRuntime {
       }
     }
   }
+
 }
 
 function isGroupReceiveMode(value: unknown): value is GroupReceiveMode { return value === 'auto' || value === 'mention' || value === 'silent' }
@@ -291,11 +302,14 @@ function publicAttachments(attachments: StoredAttachmentSummary[]): StoredAttach
     quoted: Boolean(attachment.quoted),
   }))
 }
-function sanitizeQuote(quote: QQQuoteInput, includeAttachments = true): QQQuoteInput {
+function sanitizeQuote(quote: QQQuoteInput, includeAttachments = true, stored: StoredAttachmentSummary[] = []): QQQuoteInput {
   return {
     ...quote,
     attachments: includeAttachments
-      ? quote.attachments.map(({ sourceUrl: _sourceUrl, ...attachment }) => attachment)
+      ? quote.attachments.map(({ sourceUrl: _sourceUrl, ...attachment }) => {
+          const match = stored.find(item => item.quoted && (item.id === attachment.attachmentId || item.filename === attachment.filename))
+          return match ? { ...attachment, attachmentId: match.id } : attachment
+        })
       : [],
   }
 }
@@ -320,5 +334,33 @@ function dedupeAttachments(attachments: StoredAttachmentSummary[]): StoredAttach
     if (seen.has(attachment.id)) return false
     seen.add(attachment.id)
     return true
+  })
+}
+
+export function mergeIndexedQuote(message: QQNormalizedMessage, indexed: import('../types.js').QQQuoteIndexRow | undefined): QQNormalizedMessage {
+  if (!indexed) return message
+  const current = message.quote
+  const attachments = current?.attachments?.length ? current.attachments : indexed.attachments.map(attachment => ({ ...attachment, quoted: true }))
+  message.quote = {
+    messageId: current?.messageId || indexed.platformMessageId,
+    senderId: current?.senderId || indexed.senderId,
+    senderName: current?.senderName || indexed.senderName,
+    text: current?.text || indexed.content,
+    attachments,
+  }
+  if (!message.quotedText) message.quotedText = indexed.content
+  return message
+}
+
+export function indexAttachments(inputs: QQAttachmentInput[], stored: StoredAttachmentSummary[]): QQAttachmentInput[] {
+  return inputs.map(input => {
+    const match = stored.find(item => !item.quoted && item.filename === input.filename)
+    return {
+      filename: input.filename, ...(input.contentType ? { contentType: input.contentType } : {}),
+      ...(input.size !== undefined ? { size: input.size } : {}), ...(input.width !== undefined ? { width: input.width } : {}),
+      ...(input.height !== undefined ? { height: input.height } : {}), ...(input.durationMs !== undefined ? { durationMs: input.durationMs } : {}),
+      ...(input.platformFileId ? { platformFileId: input.platformFileId } : {}), ...(input.kind ? { kind: input.kind } : {}),
+      ...(match ? { attachmentId: match.id } : {}),
+    }
   })
 }

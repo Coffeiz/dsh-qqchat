@@ -36,24 +36,24 @@ Web 渲染后续采用“DSH 原生优先”的方案：触发 Agent 的消息�
 
 ### dsh-qqchat 当前状态
 
-当前插件已经支持引用文本的基础处理：
+当前插件已经支持基础媒体和引用处理：
 
 - 从 `message_reference`、`reference`、`quote` 和 QQ 原生 `message_scene.ext` 中提取引用文本；
 - 将引用文本保存到 `messages.quoted_text`；
-- 给 Agent 组装成 Markdown 引用块；
+- 将引用正文和附件保存为独立结构；
+- 使用 SQLite 引用索引按账号、聊天范围和 `msg_idx` 回填历史引用；
+- 对已保存的引用附件复用现有附件 ID 和物理文件；
+- 给 Agent 和 DSH Web 组装独立引用块；
 - 发送回复时使用当前 QQ 消息 ID 作为回复目标。
 
-当前尚未形成完整的媒体/引用模型：
+当前仍未完成的媒体/引用能力：
 
-- `QQNormalizedMessage` 没有附件数组；
-- `InsertMessageInput` 没有附件或引用消息元数据；
-- SQLite 没有附件表和消息附件关系；
-- `msg_elements` 中的图片、文件、语音、视频没有统一标准化；
-- Agent 主消息目前只有文本 `ContentBlock`；
-- 出站消息只有文本/Markdown 路径；
-- 没有媒体目录、附件清理、文件大小限制和下载 SSRF 防护的专用实现。
+- 真实 QQ C2C 图片引用和网关重启恢复验收；
+- 机器人出站消息的完整引用索引；
+- 多次引用、过期引用和下载失败的真实集成测试；
+- DSH Web 自定义 transcript 的完整原生媒体 renderer。
 
-因此现在的引用属于“引用文本”，不是完整的“引用消息上下文”。
+引用索引的专项实施方案见 [QUOTES.md](QUOTES.md)。
 
 ### 官方 dsh-qqbot
 

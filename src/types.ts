@@ -33,6 +33,7 @@ export interface QQAttachmentInput {
   platformFileId?: string
   quoted?: boolean
   kind?: QQMediaKind
+  attachmentId?: string
 }
 
 export interface QQQuoteInput {
@@ -302,6 +303,8 @@ export interface QQNormalizedMessage {
   senderName: string
   groupOpenid?: string
   messageId: string
+  msgIdx?: string
+  refMsgIdx?: string
   text: string
   quotedText: string
   attachments: QQAttachmentInput[]
@@ -309,6 +312,24 @@ export interface QQNormalizedMessage {
   mentioned: boolean
   botMentionId: string
   raw: Record<string, unknown>
+}
+
+export interface QQQuoteIndexInput {
+  accountId: number
+  chatType: ChatType
+  chatId: string
+  msgIdx: string
+  platformMessageId?: string
+  senderId: string
+  senderName?: string
+  content: string
+  attachments: QQAttachmentInput[]
+  createdAt: number
+  expiresAt: number
+}
+
+export interface QQQuoteIndexRow extends QQQuoteIndexInput {
+  id: number
 }
 
 export interface QQAuthor {

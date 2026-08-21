@@ -35,6 +35,8 @@ test('extracts native QQ reply quote from message_scene and msg_elements', () =>
   }, 7)
   assert.ok(message)
   assert.equal(message.quotedText, '被引用的原消息 <内容>')
+  assert.equal(message.msgIdx, '2')
+  assert.equal(message.refMsgIdx, '1')
 })
 
 test('renders QQ mention ids as display names when payload or member lookup provides one', () => {

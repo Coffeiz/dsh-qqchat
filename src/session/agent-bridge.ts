@@ -578,6 +578,7 @@ function displayEventPayload(event: QQChatDisplayEvent): QQChatDisplayEvent {
     ...(event.quote.senderName ? { senderName: String(event.quote.senderName) } : {}),
     text: String(event.quote.text || ''),
     attachments: event.quote.attachments.map(attachment => ({
+      ...(attachment.attachmentId ? { id: String(attachment.attachmentId) } : {}),
       filename: String(attachment.filename),
       ...(attachment.contentType ? { contentType: String(attachment.contentType) } : {}),
       ...(attachment.size !== undefined ? { size: Number(attachment.size) } : {}),

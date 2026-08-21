@@ -137,6 +137,20 @@ test('attachment reuse is keyed by account and source message identity', () => w
   assert.equal(db.findReusableAttachment(Number(account.id), 'other-message', 'file-1', 'image'), undefined)
 }))
 
+test('quote index restores scoped message metadata and expires', () => withDb(db => {
+  const account = db.upsertAccount('app-quote-index', 'secret-quote-index')
+  db.saveQuoteIndex({
+    accountId: Number(account.id), chatType: 'c2c', chatId: 'user-quote', msgIdx: 'idx-1',
+    platformMessageId: 'message-quote', senderId: 'sender-quote', senderName: 'Alice', content: '原消息',
+    attachments: [{ attachmentId: 'qqatt-quote', filename: 'quote.png', contentType: 'image/png', kind: 'image', quoted: true }],
+    createdAt: 100, expiresAt: Date.now() + 60_000,
+  })
+  assert.equal(db.quoteIndex(Number(account.id), 'c2c', 'user-quote', 'idx-1')?.content, '原消息')
+  assert.equal(db.quoteIndex(Number(account.id), 'group', 'user-quote', 'idx-1'), undefined)
+  assert.equal(db.expireQuoteIndex(Date.now() + 120_000), 1)
+  assert.equal(db.quoteIndex(Number(account.id), 'c2c', 'user-quote', 'idx-1'), undefined)
+}))
+
 test('attachment reads are limited to the DSH session that owns the message', () => withDb(db => {
   const account = db.upsertAccount('app-attachment-scope', 'secret-attachment-scope')
   const group = db.upsertGroup(Number(account.id), 'group-attachment-scope')

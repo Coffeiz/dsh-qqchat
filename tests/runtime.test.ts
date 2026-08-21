@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { shouldReplyToGroup } from '../src/session/runtime.js'
+import { indexAttachments, mergeIndexedQuote, shouldReplyToGroup } from '../src/session/runtime.js'
+import type { QQNormalizedMessage } from '../src/types.js'
 
 const group = { enabled: 1 as const, read_enabled: 1 as const }
 
@@ -20,4 +21,31 @@ test('global silent mode does not reply even when the bot is mentioned', () => {
 test('disabled or unreadable groups never reply', () => {
   assert.equal(shouldReplyToGroup('auto', { enabled: 0, read_enabled: 1 }, false), false)
   assert.equal(shouldReplyToGroup('auto', { enabled: 1, read_enabled: 0 }, false), false)
+})
+
+test('indexed quote fills missing text and attachments without changing current text', () => {
+  const message: QQNormalizedMessage = {
+    platform: 'qq' as const, accountId: 1, chatType: 'c2c' as const, chatId: 'user-1', senderId: 'sender-2', senderName: 'Bob',
+    messageId: 'current', msgIdx: 'current', refMsgIdx: 'old', text: '这张图是什么？', quotedText: '', attachments: [], mentioned: true,
+    botMentionId: '', raw: {},
+  }
+  mergeIndexedQuote(message, {
+    id: 1, accountId: 1, chatType: 'c2c', chatId: 'user-1', msgIdx: 'old', platformMessageId: 'old-message',
+    senderId: 'sender-1', senderName: 'Alice', content: '请看看这张图',
+    attachments: [{ attachmentId: 'qqatt-old', filename: 'old.png', contentType: 'image/png', kind: 'image' }],
+    createdAt: 1, expiresAt: Date.now() + 60_000,
+  })
+  assert.equal(message.text, '这张图是什么？')
+  assert.equal(message.quotedText, '请看看这张图')
+  assert.equal(message.quote?.senderName, 'Alice')
+  assert.equal(message.quote?.attachments[0]?.attachmentId, 'qqatt-old')
+})
+
+test('quote index metadata strips source URLs and maps stored attachment IDs', () => {
+  const result = indexAttachments([
+    { filename: 'image.png', sourceUrl: 'https://signed.example/image', platformFileId: 'file-1', kind: 'image' },
+  ], [{ id: 'qqatt-1', kind: 'image', filename: 'image.png', sizeBytes: 10, quoted: false }])
+  assert.equal(result[0]?.sourceUrl, undefined)
+  assert.equal(result[0]?.attachmentId, 'qqatt-1')
+  assert.equal(result[0]?.platformFileId, 'file-1')
 })

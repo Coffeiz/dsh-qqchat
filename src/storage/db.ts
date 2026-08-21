@@ -23,6 +23,8 @@ import type {
   QQChatRuntimeSettings,
   QQAttachmentInput,
   QQMediaKind,
+  QQQuoteIndexInput,
+  QQQuoteIndexRow,
   QQQuoteInput,
   StoredAttachmentSummary,
 } from '../types.js'
@@ -134,6 +136,22 @@ export class QQChatDatabase {
         updated_at INTEGER NOT NULL,
         UNIQUE(account_id, platform_group_id)
       );
+      CREATE TABLE IF NOT EXISTS qq_quote_index (
+        id INTEGER PRIMARY KEY,
+        account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        chat_type TEXT NOT NULL CHECK(chat_type IN ('c2c','group')),
+        chat_id TEXT NOT NULL,
+        msg_idx TEXT NOT NULL,
+        platform_message_id TEXT,
+        sender_id TEXT NOT NULL,
+        sender_name TEXT,
+        content TEXT NOT NULL DEFAULT '',
+        attachments_json TEXT NOT NULL DEFAULT '[]',
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        UNIQUE(account_id, chat_type, chat_id, msg_idx)
+      );
+      CREATE INDEX IF NOT EXISTS qq_quote_index_expiry ON qq_quote_index(expires_at);
       CREATE TABLE IF NOT EXISTS members (
         id INTEGER PRIMARY KEY,
         account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -399,6 +417,39 @@ export class QQChatDatabase {
     this.db.prepare('UPDATE groups SET name=?,enabled=?,read_enabled=?,updated_at=? WHERE id=?')
       .run(next.name, next.enabled, next.read_enabled, now(), id)
     return this.groupById(id)
+  }
+
+  saveQuoteIndex(input: QQQuoteIndexInput): void {
+    this.db.prepare(`INSERT INTO qq_quote_index
+      (account_id,chat_type,chat_id,msg_idx,platform_message_id,sender_id,sender_name,content,attachments_json,created_at,expires_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(account_id,chat_type,chat_id,msg_idx) DO UPDATE SET
+        platform_message_id=excluded.platform_message_id,sender_id=excluded.sender_id,sender_name=excluded.sender_name,
+        content=excluded.content,attachments_json=excluded.attachments_json,created_at=excluded.created_at,expires_at=excluded.expires_at`)
+      .run(input.accountId, input.chatType, input.chatId, input.msgIdx, input.platformMessageId || null,
+        input.senderId, input.senderName || null, input.content.slice(0, 200), JSON.stringify(input.attachments), input.createdAt, input.expiresAt)
+  }
+
+  quoteIndex(accountId: number, chatType: ChatType, chatId: string, msgIdx: string): QQQuoteIndexRow | undefined {
+    const row = one<Record<string, unknown>>(this.db.prepare(`SELECT * FROM qq_quote_index
+      WHERE account_id=? AND chat_type=? AND chat_id=? AND msg_idx=? AND expires_at>?`).get(accountId, chatType, chatId, msgIdx, now()))
+    if (!row) return undefined
+    let attachments: QQAttachmentInput[] = []
+    try {
+      const parsed = JSON.parse(String(row.attachments_json || '[]'))
+      if (Array.isArray(parsed)) attachments = parsed as QQAttachmentInput[]
+    } catch {}
+    return {
+      id: Number(row.id), accountId: Number(row.account_id), chatType: row.chat_type as ChatType, chatId: String(row.chat_id),
+      msgIdx: String(row.msg_idx), platformMessageId: row.platform_message_id ? String(row.platform_message_id) : undefined,
+      senderId: String(row.sender_id), senderName: row.sender_name ? String(row.sender_name) : undefined,
+      content: String(row.content || ''), attachments, createdAt: Number(row.created_at), expiresAt: Number(row.expires_at),
+    }
+  }
+
+  expireQuoteIndex(before: number): number {
+    const result = this.db.prepare('DELETE FROM qq_quote_index WHERE expires_at<=?').run(before)
+    return Number(result.changes || 0)
   }
 
   listGroups(): GroupListRow[] {
