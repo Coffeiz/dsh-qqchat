@@ -213,8 +213,8 @@ export class QQChatRuntime {
       direction: 'inbound', senderId: message.senderId,
       senderName: message.senderName || member.display_name || (isOwner ? 'Owner' : 'QQ 用户'),
       isOwner,
-      content: transcriptContent(message.text, storedAttachments),
-      quotedText: message.quotedText, mentioned: message.mentioned, createdAt: Date.now(), attachments: publicAttachments(storedAttachments), quote: safeQuote,
+      content: transcriptContent(message.text, ownAttachments),
+      quotedText: message.quotedText, mentioned: message.mentioned, createdAt: Date.now(), attachments: publicAttachments(ownAttachments), quote: safeQuote,
     }
       if (settings.memoryEnabled) {
         if (group) this.memory.schedule(Number(group.id))
@@ -303,11 +303,13 @@ function publicAttachments(attachments: StoredAttachmentSummary[]): StoredAttach
   }))
 }
 function sanitizeQuote(quote: QQQuoteInput, includeAttachments = true, stored: StoredAttachmentSummary[] = []): QQQuoteInput {
+  const quotedStored = stored.filter(item => item.quoted)
   return {
     ...quote,
     attachments: includeAttachments
-      ? quote.attachments.map(({ sourceUrl: _sourceUrl, ...attachment }) => {
-          const match = stored.find(item => item.quoted && (item.id === attachment.attachmentId || item.filename === attachment.filename))
+      ? quote.attachments.map(({ sourceUrl: _sourceUrl, ...attachment }, index) => {
+          const match = quotedStored.find(item => item.id === attachment.attachmentId || (attachment.platformFileId && item.sourceFileId === attachment.platformFileId))
+            || quotedStored[index]
           return match ? { ...attachment, attachmentId: match.id } : attachment
         })
       : [],
@@ -353,8 +355,9 @@ export function mergeIndexedQuote(message: QQNormalizedMessage, indexed: import(
 }
 
 export function indexAttachments(inputs: QQAttachmentInput[], stored: StoredAttachmentSummary[]): QQAttachmentInput[] {
-  return inputs.map(input => {
-    const match = stored.find(item => !item.quoted && item.filename === input.filename)
+  const ownStored = stored.filter(item => !item.quoted)
+  return inputs.map((input, index) => {
+    const match = ownStored.find(item => input.platformFileId && item.sourceFileId === input.platformFileId) || ownStored[index]
     return {
       filename: input.filename, ...(input.contentType ? { contentType: input.contentType } : {}),
       ...(input.size !== undefined ? { size: input.size } : {}), ...(input.width !== undefined ? { width: input.width } : {}),

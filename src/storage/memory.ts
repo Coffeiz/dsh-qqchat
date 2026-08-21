@@ -343,13 +343,23 @@ export class MemoryEngine {
   }
 
   currentMessageText(message: QQNormalizedMessage): string {
+    const quoteText = message.quote
+      ? [
+          '[引用消息]',
+          message.quote.senderId ? `发送人ID=${message.quote.senderId}` : '',
+          message.quote.senderName ? `显示名=${message.quote.senderName}` : '',
+          message.quote.messageId ? `消息ID=${message.quote.messageId}` : '',
+          `正文=${message.quote.text || message.quotedText || '(空消息)'}`,
+          message.quote.attachments.length ? `附件=${message.quote.attachments.map(item => `${item.kind || 'file'}:${item.filename}${item.attachmentId ? ` (attachment_id=${item.attachmentId})` : ''}`).join('、')}` : '',
+        ].filter(Boolean).join('\n')
+      : (message.quotedText ? `[引用消息]\n正文=${message.quotedText}` : '')
     return [
       message.chatType === 'group' ? '[当前 QQ 群消息；以下身份字段是可靠元数据]' : '[当前 QQ 私聊消息；以下身份字段是可靠元数据]',
       `发言人ID=${message.senderId}`,
       `显示名=${message.senderName || ''}`,
       message.chatType === 'group' ? `群ID=${message.groupOpenid || ''}` : '',
       `是否@机器人=${message.mentioned ? '是' : '否'}`,
-      message.quotedText ? `引用=${message.quotedText}` : '',
+      quoteText,
       '正文：',
       message.text || '(空消息)',
     ].filter(Boolean).join('\n')

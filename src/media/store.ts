@@ -29,7 +29,7 @@ export class QQMediaStore {
             try {
               await access(existingById.localPath)
               this.db.extendAttachment(existingById.id, Date.now() + RETENTION_MS)
-              result.push({ ...existingById, quoted: Boolean(input.quoted) })
+            result.push({ ...existingById, quoted: Boolean(input.quoted), sourceFileId: input.platformFileId || existingById.sourceFileId })
               continue
             } catch {}
           }
@@ -39,7 +39,7 @@ export class QQMediaStore {
           try {
             await access(reusable.localPath)
             this.db.extendAttachment(reusable.id, Date.now() + RETENTION_MS)
-            result.push({ ...reusable, quoted: Boolean(input.quoted) })
+            result.push({ ...reusable, quoted: Boolean(input.quoted), sourceFileId: input.platformFileId || reusable.sourceFileId })
             continue
           } catch {}
         }
@@ -55,7 +55,7 @@ export class QQMediaStore {
         const kind = input.kind || inferKind(input.contentType, input.filename)
         const summary: StoredAttachmentSummary = {
           id, kind, filename: safeFilename(input.filename), contentType: input.contentType,
-          sizeBytes: downloaded.data.byteLength, quoted: Boolean(input.quoted), localPath: path, imageRef,
+          sizeBytes: downloaded.data.byteLength, quoted: Boolean(input.quoted), sourceFileId: input.platformFileId, localPath: path, imageRef,
         }
         this.db.saveAttachment({ id, accountId, sourceMessageId: messageId, sourceFileId: input.platformFileId,
           kind, filename: summary.filename, contentType: input.contentType, sizeBytes: summary.sizeBytes,

@@ -586,19 +586,19 @@ export class QQChatDatabase {
   }
 
   attachmentById(id: string): StoredAttachmentSummary | undefined {
-    const row = one<{ id: string; kind: QQMediaKind; filename: string; content_type: string | null; size_bytes: number; local_path: string | null; image_ref_json: string | null }>(
-      this.db.prepare('SELECT id,kind,filename,content_type,size_bytes,local_path,image_ref_json FROM attachments WHERE id=?').get(id),
+    const row = one<{ id: string; source_file_id: string | null; kind: QQMediaKind; filename: string; content_type: string | null; size_bytes: number; local_path: string | null; image_ref_json: string | null }>(
+      this.db.prepare('SELECT id,source_file_id,kind,filename,content_type,size_bytes,local_path,image_ref_json FROM attachments WHERE id=?').get(id),
     )
     if (!row) return undefined
     let imageRef: StoredAttachmentSummary['imageRef'] | undefined
     try { imageRef = row.image_ref_json ? JSON.parse(row.image_ref_json) : undefined } catch {}
-    return { id: row.id, kind: row.kind, filename: row.filename, contentType: row.content_type || undefined,
+    return { id: row.id, sourceFileId: row.source_file_id || undefined, kind: row.kind, filename: row.filename, contentType: row.content_type || undefined,
       sizeBytes: Number(row.size_bytes || 0), quoted: false, localPath: row.local_path || undefined, imageRef }
   }
 
   findReusableAttachment(accountId: number, sourceMessageId: string, sourceFileId?: string, kind?: QQMediaKind): StoredAttachmentSummary | undefined {
-    const row = one<{ id: string; kind: QQMediaKind; filename: string; content_type: string | null; size_bytes: number; local_path: string | null; image_ref_json: string | null }>(
-      this.db.prepare(`SELECT id,kind,filename,content_type,size_bytes,local_path,image_ref_json FROM attachments
+    const row = one<{ id: string; source_file_id: string | null; kind: QQMediaKind; filename: string; content_type: string | null; size_bytes: number; local_path: string | null; image_ref_json: string | null }>(
+      this.db.prepare(`SELECT id,source_file_id,kind,filename,content_type,size_bytes,local_path,image_ref_json FROM attachments
         WHERE account_id=? AND source_message_id=? AND status IN ('staged','attached')
           AND (? IS NULL OR source_file_id=? ) AND (? IS NULL OR kind=? ) AND local_path IS NOT NULL
         ORDER BY created_at DESC LIMIT 1`).get(accountId, sourceMessageId, sourceFileId || null, sourceFileId || null, kind || null, kind || null),
@@ -606,7 +606,7 @@ export class QQChatDatabase {
     if (!row) return undefined
     let imageRef: StoredAttachmentSummary['imageRef'] | undefined
     try { imageRef = row.image_ref_json ? JSON.parse(row.image_ref_json) : undefined } catch {}
-    return { id: row.id, kind: row.kind, filename: row.filename, contentType: row.content_type || undefined,
+    return { id: row.id, sourceFileId: row.source_file_id || undefined, kind: row.kind, filename: row.filename, contentType: row.content_type || undefined,
       sizeBytes: Number(row.size_bytes || 0), quoted: false, localPath: row.local_path || undefined, imageRef }
   }
 
@@ -616,8 +616,8 @@ export class QQChatDatabase {
   }
 
   attachmentForSession(sessionId: string, attachmentId: string): StoredAttachmentSummary | undefined {
-    const row = one<{ id: string; kind: QQMediaKind; filename: string; content_type: string | null; size_bytes: number; local_path: string | null; image_ref_json: string | null; status: string; expires_at: number | null }>(this.db.prepare(`
-      SELECT a.id,a.kind,a.filename,a.content_type,a.size_bytes,a.local_path,a.image_ref_json,a.status,a.expires_at
+    const row = one<{ id: string; source_file_id: string | null; kind: QQMediaKind; filename: string; content_type: string | null; size_bytes: number; local_path: string | null; image_ref_json: string | null; status: string; expires_at: number | null }>(this.db.prepare(`
+      SELECT a.id,a.source_file_id,a.kind,a.filename,a.content_type,a.size_bytes,a.local_path,a.image_ref_json,a.status,a.expires_at
       FROM attachments a JOIN message_attachments ma ON ma.attachment_id=a.id
       JOIN messages msg ON msg.id=ma.message_id
       LEFT JOIN groups g ON g.id=msg.group_id
@@ -633,7 +633,7 @@ export class QQChatDatabase {
     if (!row) return undefined
     let imageRef: StoredAttachmentSummary['imageRef'] | undefined
     try { imageRef = row.image_ref_json ? JSON.parse(row.image_ref_json) : undefined } catch {}
-    return { id: row.id, kind: row.kind, filename: row.filename, contentType: row.content_type || undefined,
+    return { id: row.id, sourceFileId: row.source_file_id || undefined, kind: row.kind, filename: row.filename, contentType: row.content_type || undefined,
       sizeBytes: Number(row.size_bytes || 0), quoted: false, localPath: row.local_path || undefined, imageRef }
   }
 

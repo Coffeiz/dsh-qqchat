@@ -555,7 +555,9 @@ function transcriptContent(event: QQChatDisplayEvent, db: QQChatDatabase): Conte
   const attachments = event.attachments || []
   const renderableImages = attachments.filter(attachment => attachment.kind === 'image' && db.attachmentById(attachment.id)?.imageRef)
   const imagePlaceholderLines = new Set(renderableImages.map(attachment => `[图片] ${attachment.filename}`))
-  const text = event.content.split('\n').filter(line => !imagePlaceholderLines.has(line)).join('\n').trim()
+  const quote = event.quote ? formatDisplayQuote(event) : ''
+  const body = event.content.split('\n').filter(line => !imagePlaceholderLines.has(line)).join('\n').trim()
+  const text = [quote, body].filter(Boolean).join('\n\n')
   const content: ContentBlock[] = [{ type: 'text', text }]
   for (const attachment of attachments) {
     const imageRef = attachment.kind === 'image' ? db.attachmentById(attachment.id)?.imageRef : undefined
@@ -564,6 +566,18 @@ function transcriptContent(event: QQChatDisplayEvent, db: QQChatDatabase): Conte
     }
   }
   return content
+}
+
+function formatDisplayQuote(event: QQChatDisplayEvent): string {
+  const quote = event.quote
+  if (!quote) return ''
+  return [
+    '[引用消息]',
+    quote.senderId ? `发送人ID=${quote.senderId}` : '',
+    quote.senderName ? `显示名=${quote.senderName}` : '',
+    quote.messageId ? `消息ID=${quote.messageId}` : '',
+    `正文=${quote.text || '(空消息)'}`,
+  ].filter(Boolean).join('\n')
 }
 
 function displayEventPayload(event: QQChatDisplayEvent): QQChatDisplayEvent {

@@ -51,6 +51,8 @@ export interface StoredAttachmentSummary {
   contentType?: string
   sizeBytes: number
   quoted: boolean
+  /** Platform file identity used to preserve one-to-one input mapping. */
+  sourceFileId?: string
   localPath?: string
   imageRef?: ImageAttachmentRef
 }

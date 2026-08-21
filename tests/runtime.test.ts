@@ -44,8 +44,13 @@ test('indexed quote fills missing text and attachments without changing current 
 test('quote index metadata strips source URLs and maps stored attachment IDs', () => {
   const result = indexAttachments([
     { filename: 'image.png', sourceUrl: 'https://signed.example/image', platformFileId: 'file-1', kind: 'image' },
-  ], [{ id: 'qqatt-1', kind: 'image', filename: 'image.png', sizeBytes: 10, quoted: false }])
+    { filename: 'image.png', sourceUrl: 'https://signed.example/image-2', platformFileId: 'file-2', kind: 'image' },
+  ], [
+    { id: 'qqatt-1', kind: 'image', filename: 'image.png', sizeBytes: 10, quoted: false, sourceFileId: 'file-1' },
+    { id: 'qqatt-2', kind: 'image', filename: 'image.png', sizeBytes: 11, quoted: false, sourceFileId: 'file-2' },
+  ])
   assert.equal(result[0]?.sourceUrl, undefined)
   assert.equal(result[0]?.attachmentId, 'qqatt-1')
+  assert.equal(result[1]?.attachmentId, 'qqatt-2')
   assert.equal(result[0]?.platformFileId, 'file-1')
 })

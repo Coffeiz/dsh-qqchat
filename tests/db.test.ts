@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { DatabaseSync } from 'node:sqlite'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -168,3 +169,47 @@ test('attachment reads are limited to the DSH session that owns the message', ()
   assert.equal(db.attachmentForSession('session-member-private', attachmentId), undefined)
   assert.equal(db.attachmentForSession('session-other', attachmentId), undefined)
 }))
+
+test('legacy groups migration removes requires_at without losing group state', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-qqchat-legacy-'))
+  const path = join(dir, 'qqchat.sqlite')
+  const legacy = new DatabaseSync(path)
+  legacy.exec(`
+    CREATE TABLE accounts (
+      id INTEGER PRIMARY KEY, app_id TEXT NOT NULL UNIQUE, app_secret TEXT NOT NULL,
+      bot_user_id TEXT, enabled INTEGER NOT NULL DEFAULT 1, sandbox INTEGER NOT NULL DEFAULT 0,
+      gateway_status TEXT NOT NULL DEFAULT 'offline', gateway_last_error TEXT,
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE groups (
+      id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, platform_group_id TEXT NOT NULL,
+      name TEXT, enabled INTEGER NOT NULL DEFAULT 1, requires_at INTEGER NOT NULL DEFAULT 1,
+      read_enabled INTEGER NOT NULL DEFAULT 1, dsh_session_id TEXT,
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+      UNIQUE(account_id, platform_group_id)
+    );
+    INSERT INTO accounts(id, app_id, app_secret, created_at, updated_at) VALUES(1, 'legacy-app', 'secret', 1, 1);
+    INSERT INTO groups(id, account_id, platform_group_id, name, enabled, requires_at, read_enabled, dsh_session_id, created_at, updated_at)
+      VALUES(1, 1, 'legacy-group', 'Legacy', 1, 1, 1, 'legacy-session', 1, 1);
+  `)
+  legacy.close()
+  try {
+    const db = new QQChatDatabase(path)
+    try {
+      const group = db.groupById(1)
+      assert.equal(group?.platform_group_id, 'legacy-group')
+      assert.equal(group?.dsh_session_id, 'legacy-session')
+    } finally {
+      db.close()
+    }
+    const check = new DatabaseSync(path)
+    try {
+      const columns = check.prepare('PRAGMA table_info(groups)').all() as Array<{ name: string }>
+      assert.equal(columns.some(column => column.name === 'requires_at'), false)
+    } finally {
+      check.close()
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
