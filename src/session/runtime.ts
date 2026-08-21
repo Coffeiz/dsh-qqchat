@@ -171,7 +171,7 @@ export class QQChatRuntime {
       group = this.db.upsertGroup(message.accountId, message.groupOpenid, { enabled: true, requiresAt: mode === 'mention', readEnabled: true })
       this.db.touchGroupMember(Number(group.id), Number(member.id), message.senderName)
       if (group.enabled !== 1 || group.read_enabled !== 1) return
-      shouldReply = mode !== 'silent' && (group.requires_at === 0 || message.mentioned)
+      shouldReply = shouldReplyToGroup(mode, group, message.mentioned)
     }
     message.text = renderQQMentionNames(message.text, message.raw, id => {
       const mentionedMember = this.db.memberByPlatform(message.accountId, id)
@@ -276,6 +276,10 @@ export class QQChatRuntime {
 
 function isGroupReceiveMode(value: unknown): value is GroupReceiveMode { return value === 'auto' || value === 'mention' || value === 'silent' }
 function isReplyFormat(value: unknown): value is ReplyFormat { return value === 'smart' || value === 'markdown' || value === 'compat' }
+export function shouldReplyToGroup(mode: GroupReceiveMode, group: Pick<GroupRow, 'enabled' | 'read_enabled'>, mentioned: boolean): boolean {
+  if (group.enabled !== 1 || group.read_enabled !== 1) return false
+  return mode === 'auto' || (mode === 'mention' && mentioned)
+}
 function shortId(value: string): string { return value.length > 10 ? `…${value.slice(-10)}` : value }
 function publicAttachments(attachments: StoredAttachmentSummary[]): StoredAttachmentSummary[] {
   return attachments.map(attachment => ({
