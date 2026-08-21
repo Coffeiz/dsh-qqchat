@@ -100,7 +100,7 @@ npx @deepseek-ai/dsh --profile qqchat
 1. 启动 DSH Web。
 2. 打开 **设置 → QQ Chat**。
 3. 点击 **扫码连接**。
-4. 使用手机 QQ 扫描二维码，并选择要授权的官方 Bot。
+4. 使用手机 QQ 扫描二维码，并选择要授权的官方 Bot或手动填写 AppID 和 AppSecret 接入。
 5. 授权完成后，QQ Gateway 会自动连接。
 
 如果无法扫码，也可以选择 **手动配置**，填写 QQ 开放平台的 AppID 和 AppSecret，并按需选择沙箱环境。插件会先验证凭据，验证成功后再保存并启动 Gateway。
