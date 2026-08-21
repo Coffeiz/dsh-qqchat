@@ -394,12 +394,47 @@ function dateForTimestamp(value: number | null | undefined): string {
   return new Date(Number(value || Date.now())).toISOString().slice(0, 10)
 }
 
-function parseJsonObject(text: string): ReflectionPayload | MemberReflectionPayload {
-  const trimmed = String(text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
-  try { return JSON.parse(trimmed) as ReflectionPayload | MemberReflectionPayload } catch {}
-  const start = trimmed.indexOf('{')
-  const end = trimmed.lastIndexOf('}')
-  if (start >= 0 && end > start) return JSON.parse(trimmed.slice(start, end + 1)) as ReflectionPayload | MemberReflectionPayload
+export function parseJsonObject(text: string): ReflectionPayload | MemberReflectionPayload {
+  const trimmed = String(text || '').trim()
+  const unfenced = trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+  for (const candidate of [trimmed, unfenced]) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as ReflectionPayload | MemberReflectionPayload
+    } catch {}
+  }
+
+  // Models sometimes add a short explanation before/after the JSON. Find a
+  // balanced object while respecting quoted strings and escaped characters.
+  for (let start = unfenced.indexOf('{'); start >= 0; start = unfenced.indexOf('{', start + 1)) {
+    let depth = 0
+    let inString = false
+    let escaped = false
+    for (let index = start; index < unfenced.length; index += 1) {
+      const char = unfenced[index]
+      if (inString) {
+        if (escaped) escaped = false
+        else if (char === '\\') escaped = true
+        else if (char === '"') inString = false
+        continue
+      }
+      if (char === '"') {
+        inString = true
+        continue
+      }
+      if (char === '{') depth += 1
+      else if (char === '}') {
+        depth -= 1
+        if (depth === 0) {
+          try {
+            const parsed = JSON.parse(unfenced.slice(start, index + 1)) as unknown
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as ReflectionPayload | MemberReflectionPayload
+          } catch {}
+          break
+        }
+      }
+    }
+  }
   throw new Error('记忆反思模型没有返回有效 JSON')
 }
 

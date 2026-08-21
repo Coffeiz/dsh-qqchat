@@ -30,6 +30,53 @@ test('private text stream sends start and finish parts with one stream id', asyn
   }
 })
 
+test('private text streams use fresh msg_seq values across replies', async () => {
+  const requests: Array<{ body: Record<string, unknown> }> = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    if (String(input).includes('/app/getAppAccessToken')) return response({ access_token: 'token', expires_in: 3600 })
+    requests.push({ body: JSON.parse(String(init?.body || '{}')) as Record<string, unknown> })
+    return response({ stream_msg_id: `stream-${requests.length}` })
+  }) as typeof fetch
+  try {
+    const api = new QQApiClient({} as never, { replyFormat: 'compat' } as never)
+    const account = { id: 1, app_id: 'app', app_secret: 'secret', sandbox: false } as never
+    const first = api.createPrivateTextStream(account, 'user-1', { messageId: 'incoming-1', format: 'compat' })
+    const second = api.createPrivateTextStream(account, 'user-1', { messageId: 'incoming-2', format: 'compat' })
+    await first.finish('第一条')
+    await second.finish('第二条')
+    assert.notEqual(requests[0]?.body.msg_seq, requests[2]?.body.msg_seq)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('queued private stream updates receive the stream id from the first response', async () => {
+  const requests: Array<{ body: Record<string, unknown> }> = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    if (String(input).includes('/app/getAppAccessToken')) return response({ access_token: 'token', expires_in: 3600 })
+    requests.push({ body: JSON.parse(String(init?.body || '{}')) as Record<string, unknown> })
+    return response(requests.length === 1 ? { id: 'stream-queued' } : {})
+  }) as typeof fetch
+  try {
+    const api = new QQApiClient({} as never, { replyFormat: 'compat' } as never)
+    const stream = api.createPrivateTextStream(
+      { id: 1, app_id: 'app', app_secret: 'secret', sandbox: false } as never,
+      'user-1',
+      { messageId: 'incoming-queued', format: 'compat' },
+    )
+    stream.push('a'.repeat(120))
+    stream.push('b'.repeat(120))
+    await stream.finish('a'.repeat(120) + 'b'.repeat(120))
+    assert.ok(requests.length >= 2)
+    assert.equal(requests[0]?.body.stream_msg_id, undefined)
+    assert.equal(requests[1]?.body.stream_msg_id, 'stream-queued')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 function response(body: Record<string, unknown>): Response {
   return { ok: true, status: 200, json: async () => body } as Response
 }

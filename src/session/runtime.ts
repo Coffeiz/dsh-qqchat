@@ -48,7 +48,11 @@ export class QQChatRuntime {
     this.db.close()
   }
 
-  settings(): QQChatRuntimeSettings { return this.db.runtimeSettings(defaultRuntimeSettings(this.config)) }
+  settings(): QQChatRuntimeSettings {
+    const settings = this.db.runtimeSettings(defaultRuntimeSettings(this.config))
+    if (settings.directReplyFormat === 'compat') settings.directStreamingEnabled = false
+    return settings
+  }
 
   updateSettings(patch: QQChatRuntimeSettingsPatch): QQChatRuntimeSettings {
     if (patch.memoryEnabled !== undefined) this.db.setSetting('memoryEnabled', Boolean(patch.memoryEnabled))
@@ -63,6 +67,7 @@ export class QQChatRuntime {
     if (patch.directReplyFormat !== undefined) {
       if (!isReplyFormat(patch.directReplyFormat)) throw new Error('无效的私聊消息兼容格式')
       this.db.setSetting('directReplyFormat', patch.directReplyFormat)
+      if (patch.directReplyFormat === 'compat') this.db.setSetting('directStreamingEnabled', false)
     }
     if (patch.directStreamingEnabled !== undefined) this.db.setSetting('directStreamingEnabled', Boolean(patch.directStreamingEnabled))
     if (patch.groupMembersCanUseTools !== undefined) this.db.setSetting('groupMembersCanUseTools', Boolean(patch.groupMembersCanUseTools))
@@ -220,7 +225,7 @@ export class QQChatRuntime {
         group: message.chatType === 'group', messageId: message.messageId || null,
         format: message.chatType === 'group' ? settings.groupReplyFormat : settings.directReplyFormat,
       } as const
-      const stream = message.chatType === 'c2c' && settings.directStreamingEnabled
+      const stream = message.chatType === 'c2c' && settings.directReplyFormat !== 'compat' && settings.directStreamingEnabled
         ? this.api.createPrivateTextStream(account, targetId, sendOptions)
         : undefined
       const reply = await this.bridge.reply(message, group, member, storedAttachments, stream ? delta => stream.push(delta) : undefined)

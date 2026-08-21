@@ -53,7 +53,7 @@ export function defaultRuntimeSettings(config: QQChatConfig): QQChatRuntimeSetti
     groupReceiveMode,
     groupReplyFormat: 'compat',
     directReplyFormat: config.replyFormat,
-    directStreamingEnabled: true,
+    directStreamingEnabled: config.replyFormat !== 'compat',
     groupMembersCanUseTools: false,
     groupMembersCanReceiveMedia: true,
     groupMembersCanReadMedia: false,

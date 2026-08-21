@@ -98,7 +98,7 @@ export function QQSettings({ rpc }: { rpc: Rpc }) {
     onClose: () => setOwnerMenuOpen(false),
     selectedId: settings?.ownerUserId,
     onSelect: (id: string) => { setOwnerMenuOpen(false); void patch({ ownerUserId: id }) },
-    anchor: h(Button, { size: 'sm', variant: 'outline', onClick: () => setOwnerMenuOpen(!ownerMenuOpen) }, '选择群友'),
+    anchor: h(Button, { size: 'sm', variant: 'outline', onClick: () => setOwnerMenuOpen(!ownerMenuOpen) }, '选择用户'),
     align: 'end',
     items: [{ id: '', label: '不设置 Owner' }, ...members.map(member => ({ id: member.platformUserId, label: member.displayName || 'QQ 群友' }))],
   })
@@ -154,12 +154,15 @@ export function QQSettings({ rpc }: { rpc: Rpc }) {
       h('label', { className: 'qqCheckRow' },
         h('input', {
           type: 'checkbox',
-          checked: settings.directStreamingEnabled,
+          checked: settings.directStreamingEnabled && settings.directReplyFormat !== 'compat',
+          disabled: settings.directReplyFormat === 'compat',
           onChange: (event: import('react').ChangeEvent<HTMLInputElement>) => void patch({ directStreamingEnabled: event.target.checked }),
         }),
         h('span', null,
           h('div', { className: 'qqSettingTitle' }, '私聊流式回复'),
-          h('div', { className: 'qqSettingHelp' }, settings.directStreamingEnabled
+          h('div', { className: 'qqSettingHelp' }, settings.directReplyFormat === 'compat'
+            ? '纯文本兼容模式不支持流式传输，已自动关闭。'
+            : settings.directStreamingEnabled
             ? '使用 QQ 官方流式接口逐步更新私聊回复；部分 QQ 客户端可能看不到流式效果。'
             : '使用普通一次性消息发送，兼容性更好。'))))
   )

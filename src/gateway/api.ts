@@ -50,6 +50,7 @@ export interface QQPrivateTextStream {
 export class QQApiClient {
   private readonly tokens = new Map<number, CachedToken>()
   private readonly sequences = new Map<string, number>()
+  private streamSequence = (Date.now() ^ Math.floor(Math.random() * 65_536)) & 0xffff
 
   constructor(
     private readonly db: QQChatDatabase,
@@ -90,6 +91,16 @@ export class QQApiClient {
     const next = (this.sequences.get(key) || 0) + 1
     this.sequences.set(key, next)
     return next
+  }
+
+  /**
+   * QQ stream_messages requires a fresh msg_seq for each stream session.
+   * It is intentionally not scoped by the inbound message id: using 1 for
+   * every reply causes QQ to reject later streams as duplicated messages.
+   */
+  private nextStreamSeq(): number {
+    this.streamSequence = (this.streamSequence + 1) & 0xffff
+    return this.streamSequence
   }
 
   private async request<T = Record<string, unknown>>(
@@ -165,7 +176,7 @@ export class QQApiClient {
     { messageId = null, format = this.config.replyFormat }: QQSendOptions = {},
   ): QQPrivateTextStream {
     const path = `/v2/users/${encodeURIComponent(targetId)}/stream_messages`
-    const msgSeq = this.nextSeq(messageId)
+    const msgSeq = this.nextStreamSeq()
     const contentType = format === 'markdown' ? 'markdown' : 'text'
     let fullText = ''
     let streamMessageId: string | undefined
@@ -177,13 +188,15 @@ export class QQApiClient {
     let lastSentText = ''
 
     const enqueue = (inputState: 1 | 10, content: string): Promise<void> => {
-      const body: QQStreamBody = {
-        input_mode: 'replace', input_state: inputState, index: index++, content_type: contentType,
-        content_raw: content, msg_seq: msgSeq,
-        ...(messageId ? { msg_id: messageId, event_id: messageId } : {}),
-        ...(streamMessageId ? { stream_msg_id: streamMessageId } : {}),
-      }
       chain = chain.then(async () => {
+        // Build the request only when the queued task runs. The first
+        // response supplies stream_msg_id for all following frames.
+        const body: QQStreamBody = {
+          input_mode: 'replace', input_state: inputState, index: index++, content_type: contentType,
+          content_raw: content, msg_seq: msgSeq,
+          ...(messageId ? { msg_id: messageId, event_id: messageId } : {}),
+          ...(streamMessageId ? { stream_msg_id: streamMessageId } : {}),
+        }
         let attempt = 0
         while (true) {
           try {
