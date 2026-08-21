@@ -1,10 +1,19 @@
 import { h, useCallback, useEffect, useState, call, Button, Input, Menu, Modal, dateTime } from './shared.cjs'
 import type { Account, GroupReceiveMode, KnownMember, PluginLog, ReplyFormat, Rpc, Settings } from './shared.cjs'
 
+interface QQSettingsCache {
+  account: Account | null
+  settings: Settings | null
+  members: KnownMember[]
+}
+
+let qqSettingsCache: QQSettingsCache | undefined
+
 export function QQSettings({ rpc }: { rpc: Rpc }) {
-  const [account, setAccount] = useState<Account | null>(null)
-  const [settings, setSettings] = useState<Settings | null>(null)
-  const [members, setMembers] = useState<KnownMember[]>([])
+  const [account, setAccount] = useState<Account | null>(() => qqSettingsCache?.account || null)
+  const [settings, setSettings] = useState<Settings | null>(() => qqSettingsCache?.settings || null)
+  const [members, setMembers] = useState<KnownMember[]>(() => qqSettingsCache?.members || [])
+  const [loading, setLoading] = useState(() => qqSettingsCache === undefined)
   const [auth, setAuth] = useState<{ taskId: string; qrDataUrl: string } | null>(null)
   const [logs, setLogs] = useState<PluginLog[] | null>(null)
   const [busy, setBusy] = useState(false)
@@ -19,11 +28,17 @@ export function QQSettings({ rpc }: { rpc: Rpc }) {
         call<{ accounts: Account[] }>(rpc, 'status'),
         call<{ settings: Settings; members: KnownMember[] }>(rpc, 'settings/get'),
       ])
-      setAccount(status.accounts.find(item => item.enabled) || null)
-      setSettings(prefs.settings)
-      setMembers(prefs.members || [])
+      const next = {
+        account: status.accounts.find(item => item.enabled) || null,
+        settings: prefs.settings,
+        members: prefs.members || [],
+      }
+      qqSettingsCache = next
+      setAccount(next.account)
+      setSettings(next.settings)
+      setMembers(next.members)
       setError('')
-    } catch (err) { setError(err instanceof Error ? err.message : String(err)) }
+    } catch (err) { setError(err instanceof Error ? err.message : String(err)) } finally { setLoading(false) }
   }, [rpc])
 
   useEffect(() => { void refresh() }, [refresh])
@@ -54,6 +69,7 @@ export function QQSettings({ rpc }: { rpc: Rpc }) {
     try {
       const result = await call<{ settings: Settings }>(rpc, 'settings/update', { patch: value })
       setSettings(result.settings)
+      if (qqSettingsCache) qqSettingsCache = { ...qqSettingsCache, settings: result.settings }
       setError('')
     } catch (err) { setSettings(settings); setError(err instanceof Error ? err.message : String(err)) }
   }, [rpc, settings])
@@ -68,6 +84,7 @@ export function QQSettings({ rpc }: { rpc: Rpc }) {
     try {
       await call(rpc, 'account/disconnect', { accountId: account.id })
       setAccount(null)
+      if (qqSettingsCache) qqSettingsCache = { ...qqSettingsCache, account: null }
       setAuth(null)
       setError('已取消连接，可以重新扫码绑定 Bot。')
     } catch (err) { setError(err instanceof Error ? err.message : String(err)) } finally { setBusy(false) }
@@ -108,8 +125,9 @@ export function QQSettings({ rpc }: { rpc: Rpc }) {
 
   const head = h('div', { className: 'qqsHead' },
     h('div', null, h('div', { className: 'qqsTitle' }, 'QQ Chat'), h('div', { className: 'qqMuted' }, 'QQ Bot 接收、兼容与权限设置')),
-    h('div', { className: 'qqStatus' }, account ? (account.gatewayStatus === 'online' ? '已连接' : '已授权') : '未连接', account && h(Button, { size: 'sm', variant: 'outline', disabled: busy, onClick: () => void disconnect() }, '取消连接')))
+    h('div', { className: 'qqStatus' }, loading ? '加载中…' : account ? (account.gatewayStatus === 'online' ? '已连接' : '已授权') : '未连接', account && h(Button, { size: 'sm', variant: 'outline', disabled: busy, onClick: () => void disconnect() }, '取消连接')))
 
+  if (loading) return h('div', { className: 'qqs' }, head, h('div', { className: 'qqMuted' }, '正在读取 QQ Chat 设置…'))
   if (!account) return h('div', { className: 'qqs' }, head, error && h('div', { className: 'qqError' }, error), h('div', { className: 'qqConnect' }, h('div', { className: 'qqsTitle' }, auth ? '使用 QQ 扫码授权' : '连接 QQ Bot'), h('div', { className: 'qqMuted' }, '扫码和凭据解密都在 DSH Host 侧完成。'), auth && h('div', { className: 'qqQr' }, h('img', { src: auth.qrDataUrl, alt: 'QQ 授权二维码' })), h(Button, { variant: 'primary', disabled: busy, onClick: () => void startAuth() }, auth ? '重新生成二维码' : '扫码连接')))
   if (!settings) return h('div', { className: 'qqs' }, head, h('div', { className: 'qqMuted' }, '正在读取设置…'))
 
@@ -162,7 +180,21 @@ export function QQSettings({ rpc }: { rpc: Rpc }) {
           h('div', { className: 'qqSettingTitle' }, '群成员可用工具'),
           h('div', { className: 'qqSettingHelp' }, settings.groupMembersCanUseTools ? '群友触发的 Agent 回合可以使用当前 preset 的全部工具。' : '关闭后只有 Owner 触发的群聊回合可以执行工具；其他群友仍可正常聊天，但工具调用会被拒绝。')))),
     ownerSetting)
+  const mediaGroup = h('div', { className: 'qqSettingsGroup' },
+    h('h3', null, '媒体与文件权限'),
+    h('div', { className: 'qqSetting' },
+      h('label', { className: 'qqCheckRow' },
+        h('input', { type: 'checkbox', checked: settings.groupMembersCanReceiveMedia, onChange: (event: import('react').ChangeEvent<HTMLInputElement>) => void patch({ groupMembersCanReceiveMedia: event.target.checked }) }),
+        h('span', null,
+          h('div', { className: 'qqSettingTitle' }, '接收群成员媒体/文件'),
+          h('div', { className: 'qqSettingHelp' }, settings.groupMembersCanReceiveMedia ? '下载并在会话中显示群成员发送的图片、文件、音频和视频。' : '群成员发送的媒体不会下载、存储或注入会话；Owner 和私聊不受影响。')))),
+    h('div', { className: 'qqSetting' },
+      h('label', { className: 'qqCheckRow' },
+        h('input', { type: 'checkbox', checked: settings.groupMembersCanReadMedia, onChange: (event: import('react').ChangeEvent<HTMLInputElement>) => void patch({ groupMembersCanReadMedia: event.target.checked }) }),
+        h('span', null,
+          h('div', { className: 'qqSettingTitle' }, '允许群成员读取媒体/文件'),
+          h('div', { className: 'qqSettingHelp' }, settings.groupMembersCanReadMedia ? '群成员触发的回合可以调用 QQChat 媒体工具读取当前消息附件。' : '群成员仍可看到已接收的媒体，但不能调用媒体工具读取内容；Owner 和私聊不受影响。')))))
   const diagnosticsGroup = h('div', { className: 'qqSettingsGroup' }, h('h3', null, '诊断'), h('div', { className: 'qqSetting' }, h('div', null, h('div', { className: 'qqSettingTitle' }, '插件日志'), h('div', { className: 'qqSettingHelp' }, account.gatewayLastError ? `最近网关错误：${account.gatewayLastError}` : '查看 QQ Gateway、授权、Agent bridge 与消息发送的最近日志。')), h(Button, { size: 'sm', variant: 'outline', onClick: () => void openLogs() }, '查看日志')))
-  return h('div', { className: 'qqs' }, head, error && h('div', { className: 'qqError' }, error), receiveGroup, memoryGroup, toolsGroup, diagnosticsGroup,
+  return h('div', { className: 'qqs' }, head, error && h('div', { className: 'qqError' }, error), receiveGroup, memoryGroup, mediaGroup, toolsGroup, diagnosticsGroup,
     logs && h(Modal, { title: 'QQ Chat 日志', onClose: () => setLogs(null) }, logs.length ? logs.map(log => h('div', { key: log.id, className: `qqLog ${log.level}` }, h('span', { className: 'qqLogMeta' }, `${dateTime(log.time)} [${log.level}]`), log.message)) : h('div', { className: 'qqMuted' }, '暂无日志。')))
 }

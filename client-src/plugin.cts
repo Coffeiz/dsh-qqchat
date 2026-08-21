@@ -1,10 +1,11 @@
-import { installStyles } from './shared.cjs'
+import { installStyles, setQQRpc } from './shared.cjs'
 import type { Ctx } from './shared.cjs'
 import { QQSettings } from './settings.cjs'
 import { QQSessionUtility, QQTranscriptNode, createQQMessageDefinition } from './workspace.cjs'
 
 exports.inject = ['slots', 'connection', 'conversationEvents'] as const
 exports.apply = function apply(ctx: Ctx) {
+  setQQRpc(ctx.connection.rpc)
   ctx.effect(installStyles, 'dsh-qqchat: client styles')
   ctx.conversationEvents.register(createQQMessageDefinition())
 

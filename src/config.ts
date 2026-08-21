@@ -54,6 +54,8 @@ export function defaultRuntimeSettings(config: QQChatConfig): QQChatRuntimeSetti
     groupReplyFormat: 'compat',
     directReplyFormat: config.replyFormat,
     groupMembersCanUseTools: false,
+    groupMembersCanReceiveMedia: true,
+    groupMembersCanReadMedia: false,
     ownerUserId: '',
   }
 }

@@ -53,6 +53,8 @@ QQChat 的 SQLite 是 QQ 世界事实来源，DSH Session 只保存 Agent 实际
 
 ## 压缩策略
 
+记忆如何进入 DSH Session 的生命周期、TTL 和 Session compact 处理，见[记忆系统上下文注入方案](./MEMORY_CONTEXT.md)。
+
 压缩规则与 Gugu 的 daily → memory 规则保持一致：
 
 | Scope | 触发条数 | 保留最近 | 压缩到 |
@@ -72,15 +74,16 @@ QQChat 的 SQLite 是 QQ 世界事实来源，DSH Session 只保存 Agent 实际
 ## Agent context
 
 记忆上下文通过 DSH 官方 runtime-context snapshot 机制注入：快照使用
-`@deepseek-ai/dsh-system-prompt` 来源标记，并由 DSH 自动替换上一份快照，
-不会把每轮完整记忆累积成普通用户消息。当前 QQ 消息仍作为正常 user prompt
-进入 turn。
+`@deepseek-ai/dsh-system-prompt` 来源标记。注入策略遵循“新 Session、TTL
+过期、Session compact 后刷新”的生命周期规则，连续对话只刷新对应群或当前
+成员的 TTL，不重复注入完整记忆。群持续活跃不会替潜水成员刷新成员 TTL。
+具体状态、hash、版本和失败处理见[记忆系统上下文注入方案](./MEMORY_CONTEXT.md)。
+当前 QQ 消息仍作为正常 user prompt 进入 turn。
 
 群聊 Agent turn 注入：
 
 ```text
-近期群聊
-+ group profile/summary/memory/daily
+group profile/summary/memory/daily
 + 当前 sender profile/pattern/summary
 + stable sender ID
 + group ID
@@ -89,8 +92,7 @@ QQChat 的 SQLite 是 QQ 世界事实来源，DSH Session 只保存 Agent 实际
 私聊 Agent turn 注入对应 member scope：
 
 ```text
-近期私聊
-+ member profile/pattern/summary/daily/memory
+member profile/pattern/summary/daily/memory
 + stable sender ID
 ```
 

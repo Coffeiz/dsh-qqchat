@@ -281,17 +281,9 @@ export class MemoryEngine {
   contextForGroup(
     group: GroupRow,
     currentMember?: { id: number; platform_user_id: string; display_name: string | null },
-    currentPlatformMessageId?: string,
   ): string {
-    const history = this.db.recentGroupMessages(Number(group.id), this.config.recentGroupMessages)
-      .filter(message => !currentPlatformMessageId || message.platform_message_id !== currentPlatformMessageId)
     const groupDocs = this.db.memoryDocs('group', Number(group.id))
     const memberDocs = currentMember ? this.db.memoryDocs('member', Number(currentMember.id)) : {}
-    const lines = history.map(message => {
-      const when = new Date(Number(message.created_at)).toISOString()
-      if (message.direction === 'outbound') return `${when} | 发言人ID=BOT | 显示名=DSH Agent | ${message.content}`
-      return `${when} | 发言人ID=${message.platform_user_id || 'unknown'} | 显示名=${message.display_name || ''} | ${message.content}`
-    })
     return [
       '[QQ 群聊上下文快照]',
       '以下 sender ID / group ID 是可靠平台元数据。不要根据昵称猜身份，不要把其他群成员的兴趣、关系或记忆归到当前发言人。',
@@ -306,8 +298,6 @@ export class MemoryEngine {
       section('当前成员模式', memberDocs.pattern),
       section('当前成员摘要', memberDocs.summary),
       section('当前成员长期记忆', memberDocs.memory),
-      '[最近群聊记录；每行身份元数据可靠；不包含当前待回复消息]',
-      ...lines,
     ].filter(Boolean).join('\n')
   }
 

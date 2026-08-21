@@ -34,7 +34,8 @@
 | Quotes and mentions | Preserves quoted messages and resolves QQ mentions to display names | Stable IDs remain in metadata |
 | Memory system | Stores group, member and direct-user memory | Can be disabled; disabling does not delete existing memory |
 | Memory reflection | Converts recent daily notes into long-term memory | Runs asynchronously after idle or batch thresholds |
-| Tool permissions | Controls whether group members may use Agent tools | Owner is matched by stable user ID |
+| Media and file permissions | Separately controls receiving media, reading attachments, and regular tools | Owner and direct chats are unrestricted by default |
+| Tool permissions | Separately controls whether group members may use regular Agent tools | Owner is matched by stable user ID |
 | Native DSH commands | Runs `/compact`, `/goal`, `/model`, `/status` and more directly from QQ | Commands do not go through the model; `/help` lists the full set |
 | Native DSH UI | Uses the normal Session list, Conversation surface and composer styling | QQ Sessions remain ungrouped in DSH |
 | Diagnostics | Shows plugin logs in Settings | Useful for connection and delivery troubleshooting |
@@ -43,10 +44,15 @@
 
 <table>
   <tr>
-    <td colspan="2" align="center" valign="top">
-      <img src="./docs/assets/扫码链接.jpg" width="560" alt="QQ Chat QR connection">
+    <td width="50%" valign="top">
+      <img src="./docs/assets/扫码链接.jpg" width="100%" alt="QQ Chat QR connection">
       <h3>Scan to connect</h3>
       <p>Open <strong>Settings -> QQ Chat</strong> in DSH Web and scan the generated QR code with QQ to authorize an official Bot. Connection status, QR regeneration and cancellation are all available on the same page.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="./docs/assets/设置界面.jpg" width="100%" alt="QQ Chat settings page">
+      <h3>Settings and permissions</h3>
+      <p>Use the settings page to configure group receive mode, message formats, memory, media and file access, tool permissions and the Owner account.</p>
     </td>
   </tr>
   <tr>
@@ -58,7 +64,7 @@
     <td width="50%" valign="top">
       <img src="./docs/assets/记忆系统.jpg" width="100%" alt="QQ Chat memory system">
       <h3>Memory system</h3>
-      <p>The plugin maintains separate memory for groups, members and direct users. Member memory supports profiles, group nicknames, historical nicknames and long-term notes; recent messages are reflected asynchronously. The system can be disabled without deleting stored data.</p>
+      <p>The plugin maintains separate memory for groups, members and direct users. Member memory supports profiles, group nicknames, historical nicknames, behavior patterns and long-term notes; recent messages are organized asynchronously. Memory is refreshed as Session context when needed, and can be disabled without deleting stored data.</p>
     </td>
   </tr>
 </table>
@@ -133,18 +139,18 @@ Groups default to Plain compatibility format. Group and direct-chat formats can 
 
 ## Commands
 
-Messages beginning with `/` are handled directly by the command system and are not sent to the model. In a group, write `@Bot /help`.
+Messages beginning with `/` are handled directly by the command system and are not sent to the model. Native DSH commands keep their original names; QQChat commands use the `qq` prefix. In a group, write `@Bot /help` or `@Bot /qqhelp`.
 
 | Command | Purpose |
 | --- | --- |
-| `/help`, `/commands` | List QQChat and DSH commands |
-| `/new`, `/reset`, `/clear` | Keep the old Session and start a new one on the next message |
+| `/qqhelp`, `/qqcommands` | List QQChat and DSH commands |
+| `/qqnew`, `/qqreset`, `/qqclear` | Keep the old Session and start a new one on the next message |
 | `/compact` | Compact older conversation history |
-| `/model [provider/]model` | Show or switch the current Session model |
-| `/stop` | Stop the current generation |
-| `/status` | Show Session, model and generation status |
-| `/ping` | Check QQChat connectivity |
-| `/version` | Show the plugin version |
+| `/qqmodel [provider/]model` | Show or switch the current Session model |
+| `/qqstop` | Stop the current generation |
+| `/qqstatus` | Show Session, model and generation status |
+| `/qqping` | Check QQChat connectivity |
+| `/qqversion` | Show the plugin version |
 | `/goal` | Manage a DSH Goal |
 | `/plan` | Enter or leave Plan mode |
 | `/feedback` | Submit feedback |
@@ -160,7 +166,7 @@ QQ Chat stores:
 - Member memory: profile facts, group nicknames, historical nicknames, behavior patterns and long-term information.
 - Direct-chat memory: long-term information about a direct QQ user.
 
-Reflection runs asynchronously after the chat is idle or enough messages have accumulated. The **QQ Memory** action at the top of a QQ Session shows group and member memory. Memory is injected into each Agent turn and may reduce context-cache hit rate or increase input tokens; disable it under **Settings -> QQ Chat -> Memory system** when needed.
+Reflection runs asynchronously after the chat is idle or enough messages have accumulated. The **QQ Memory** action at the top of a QQ Session shows group and member memory. Memory snapshots refresh when a Session starts, the memory context expires, or the Session is compacted; continuous conversation does not repeatedly write the full memory. Enabled memory may reduce context-cache hit rate or increase input tokens, and can be disabled under **Settings -> QQ Chat -> Memory system** without deleting stored data.
 
 ## Tool permissions
 
@@ -194,7 +200,11 @@ QR authorization and connection
 Group receive mode
 Group and direct-chat reply formats
 Memory system [on/off]
-Group-member tool permission
+Media and file permissions and regular tool permissions are independent settings:
+
+- **Receive group-member media/files** controls whether images, files, audio, and video are downloaded, stored, and shown in the session.
+- **Allow group members to read media/files** controls whether their Agent turns may call QQChat media tools for the current attachment.
+- **Group members can use tools** controls access to regular Agent tools.
 Owner stable ID
 Diagnostics and logs
 ```

@@ -65,12 +65,16 @@ test('runtime settings persist independently from static config defaults', () =>
     groupReplyFormat: 'smart' as const,
     directReplyFormat: 'smart' as const,
     groupMembersCanUseTools: false,
+    groupMembersCanReceiveMedia: true,
+    groupMembersCanReadMedia: false,
     ownerUserId: '',
   }
   assert.deepEqual(db.runtimeSettings(defaults), defaults)
   db.setSetting('groupReceiveMode', 'silent')
   db.setSetting('groupReplyFormat', 'compat')
   db.setSetting('groupMembersCanUseTools', true)
+  db.setSetting('groupMembersCanReceiveMedia', true)
+  db.setSetting('groupMembersCanReadMedia', true)
   db.setSetting('ownerUserId', 'owner-openid')
   db.setSetting('memoryEnabled', false)
   assert.deepEqual(db.runtimeSettings(defaults), {
@@ -79,6 +83,8 @@ test('runtime settings persist independently from static config defaults', () =>
     groupReplyFormat: 'compat',
     directReplyFormat: 'smart',
     groupMembersCanUseTools: true,
+    groupMembersCanReceiveMedia: true,
+    groupMembersCanReadMedia: true,
     ownerUserId: 'owner-openid',
   })
 }))
@@ -126,4 +132,20 @@ test('attachment reuse is keyed by account and source message identity', () => w
   db.extendAttachment('qqatt-reuse', 999)
   assert.equal(db.findReusableAttachment(Number(account.id), 'quoted-message', 'file-1', 'image')?.id, 'qqatt-reuse')
   assert.equal(db.findReusableAttachment(Number(account.id), 'other-message', 'file-1', 'image'), undefined)
+}))
+
+test('attachment reads are limited to the DSH session that owns the message', () => withDb(db => {
+  const account = db.upsertAccount('app-attachment-scope', 'secret-attachment-scope')
+  const group = db.upsertGroup(Number(account.id), 'group-attachment-scope')
+  const member = db.upsertMember(Number(account.id), 'member-attachment-scope', 'Alice')
+  const attachmentId = 'qqatt-scoped'
+  db.saveAttachment({ id: attachmentId, accountId: Number(account.id), sourceMessageId: 'scoped-message', kind: 'image', filename: 'scoped.png', contentType: 'image/png', sizeBytes: 12, localPath: '/private/media/scoped.png' })
+  db.setChatSession('group', Number(group.id), 'session-group-owned')
+  db.insertMessage({
+    accountId: Number(account.id), platformMessageId: 'scoped-message', chatType: 'group', groupId: Number(group.id), memberId: Number(member.id),
+    direction: 'inbound', content: '图片',
+    attachments: [{ id: attachmentId, kind: 'image', filename: 'scoped.png', contentType: 'image/png', sizeBytes: 12, quoted: false }],
+  })
+  assert.equal(db.attachmentForSession('session-group-owned', attachmentId)?.id, attachmentId)
+  assert.equal(db.attachmentForSession('session-other', attachmentId), undefined)
 }))

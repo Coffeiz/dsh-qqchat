@@ -54,7 +54,7 @@ export function registerQQImageTool(ctx: Context, db: QQChatDatabase, isAllowed:
       }
       return {
         ok: true, attachment_id: attachment.id, filename: attachment.filename,
-        media_type: attachment.imageRef.mediaType, bytes: attachment.sizeBytes, image_ref: attachment.imageRef,
+        media_type: attachment.imageRef.mediaType, bytes: attachment.sizeBytes, image_ref: { ...attachment.imageRef },
       }
     },
   })

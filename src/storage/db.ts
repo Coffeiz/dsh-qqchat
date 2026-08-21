@@ -360,6 +360,8 @@ export class QQChatDatabase {
       groupReplyFormat: this.getSetting('groupReplyFormat', defaults.groupReplyFormat),
       directReplyFormat: this.getSetting('directReplyFormat', this.getSetting('replyFormat', defaults.directReplyFormat)),
       groupMembersCanUseTools: this.getSetting('groupMembersCanUseTools', defaults.groupMembersCanUseTools),
+      groupMembersCanReceiveMedia: this.getSetting('groupMembersCanReceiveMedia', defaults.groupMembersCanReceiveMedia),
+      groupMembersCanReadMedia: this.getSetting('groupMembersCanReadMedia', defaults.groupMembersCanReadMedia),
       ownerUserId: this.getSetting('ownerUserId', defaults.ownerUserId),
     }
   }
@@ -559,6 +561,24 @@ export class QQChatDatabase {
   extendAttachment(id: string, expiresAt: number): void {
     this.db.prepare("UPDATE attachments SET expires_at=CASE WHEN expires_at IS NULL OR expires_at<? THEN ? ELSE expires_at END, status='attached' WHERE id=?")
       .run(expiresAt, expiresAt, id)
+  }
+
+  attachmentForSession(sessionId: string, attachmentId: string): StoredAttachmentSummary | undefined {
+    const row = one<{ id: string; kind: QQMediaKind; filename: string; content_type: string | null; size_bytes: number; local_path: string | null; image_ref_json: string | null; status: string; expires_at: number | null }>(this.db.prepare(`
+      SELECT a.id,a.kind,a.filename,a.content_type,a.size_bytes,a.local_path,a.image_ref_json,a.status,a.expires_at
+      FROM attachments a JOIN message_attachments ma ON ma.attachment_id=a.id
+      JOIN messages msg ON msg.id=ma.message_id
+      LEFT JOIN groups g ON g.id=msg.group_id
+      LEFT JOIN members mem ON mem.id=msg.member_id
+      WHERE a.id=? AND a.status IN ('staged','attached') AND (a.expires_at IS NULL OR a.expires_at>?)
+        AND (g.dsh_session_id=? OR mem.dsh_session_id=?)
+      LIMIT 1
+    `).get(attachmentId, Date.now(), sessionId, sessionId))
+    if (!row) return undefined
+    let imageRef: StoredAttachmentSummary['imageRef'] | undefined
+    try { imageRef = row.image_ref_json ? JSON.parse(row.image_ref_json) : undefined } catch {}
+    return { id: row.id, kind: row.kind, filename: row.filename, contentType: row.content_type || undefined,
+      sizeBytes: Number(row.size_bytes || 0), quoted: false, localPath: row.local_path || undefined, imageRef }
   }
 
   expireAttachments(before: number): number {

@@ -1,3 +1,5 @@
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+
 export type ChatType = 'c2c' | 'group'
 export type MessageDirection = 'inbound' | 'outbound'
 export type MemoryScopeType = 'group' | 'member'
@@ -49,14 +51,7 @@ export interface StoredAttachmentSummary {
   sizeBytes: number
   quoted: boolean
   localPath?: string
-  imageRef?: {
-    attachmentId: string
-    mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
-    bytes: number
-    width: number
-    height: number
-    name?: string
-  }
+  imageRef?: ImageAttachmentRef
 }
 
 export interface QQChatRuntimeSettings {
@@ -65,6 +60,8 @@ export interface QQChatRuntimeSettings {
   groupReplyFormat: ReplyFormat
   directReplyFormat: ReplyFormat
   groupMembersCanUseTools: boolean
+  groupMembersCanReceiveMedia: boolean
+  groupMembersCanReadMedia: boolean
   ownerUserId: string
 }
 
@@ -74,6 +71,8 @@ export interface QQChatRuntimeSettingsPatch {
   groupReplyFormat?: ReplyFormat
   directReplyFormat?: ReplyFormat
   groupMembersCanUseTools?: boolean
+  groupMembersCanReceiveMedia?: boolean
+  groupMembersCanReadMedia?: boolean
   ownerUserId?: string
 }
 
@@ -290,6 +289,7 @@ export interface QQChatDisplayEvent {
   quotedText: string
   mentioned: boolean
   createdAt: number
+  sessionId?: string
   attachments?: StoredAttachmentSummary[]
   quote?: QQQuoteInput
 }

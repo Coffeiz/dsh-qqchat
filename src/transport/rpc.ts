@@ -96,6 +96,11 @@ export function createQQChatRpc(runtime: QQChatRuntime): ConnectionRpcHandler {
           const content = requireString(payload, 'content')
           return ok({ sessionId: await runtime.sendActive(chatType, rowId, content) })
         }
+        case 'attachment/read': {
+          const sessionId = requireString(payload, 'sessionId')
+          const attachmentId = requireString(payload, 'attachmentId')
+          return ok(await runtime.readAttachment(sessionId, attachmentId))
+        }
         case 'chat/info': {
           const sessionId = requireString(payload, 'sessionId')
           const group = runtime.db.groupBySession(sessionId)
@@ -300,6 +305,8 @@ function asSettingsPatch(value: unknown): QQChatRuntimeSettingsPatch {
   if (record.groupReplyFormat === 'smart' || record.groupReplyFormat === 'markdown' || record.groupReplyFormat === 'compat') patch.groupReplyFormat = record.groupReplyFormat
   if (record.directReplyFormat === 'smart' || record.directReplyFormat === 'markdown' || record.directReplyFormat === 'compat') patch.directReplyFormat = record.directReplyFormat
   if (typeof record.groupMembersCanUseTools === 'boolean') patch.groupMembersCanUseTools = record.groupMembersCanUseTools
+  if (typeof record.groupMembersCanReceiveMedia === 'boolean') patch.groupMembersCanReceiveMedia = record.groupMembersCanReceiveMedia
+  if (typeof record.groupMembersCanReadMedia === 'boolean') patch.groupMembersCanReadMedia = record.groupMembersCanReadMedia
   if (typeof record.ownerUserId === 'string') patch.ownerUserId = record.ownerUserId
   return patch
 }

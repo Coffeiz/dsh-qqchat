@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import type { Context } from '@deepseek-ai/cordis'
 import type { DshQQBridge } from './agent-bridge.js'
 import { defaultRuntimeSettings } from '../config.js'
@@ -64,6 +65,8 @@ export class QQChatRuntime {
       this.db.setSetting('directReplyFormat', patch.directReplyFormat)
     }
     if (patch.groupMembersCanUseTools !== undefined) this.db.setSetting('groupMembersCanUseTools', Boolean(patch.groupMembersCanUseTools))
+    if (patch.groupMembersCanReceiveMedia !== undefined) this.db.setSetting('groupMembersCanReceiveMedia', Boolean(patch.groupMembersCanReceiveMedia))
+    if (patch.groupMembersCanReadMedia !== undefined) this.db.setSetting('groupMembersCanReadMedia', Boolean(patch.groupMembersCanReadMedia))
     if (patch.ownerUserId !== undefined) this.db.setSetting('ownerUserId', String(patch.ownerUserId).trim())
     const next = this.settings()
     this.logger.info?.('[dsh-qqchat] settings updated', next)
@@ -117,6 +120,21 @@ export class QQChatRuntime {
     return sessionId
   }
 
+  async readAttachment(sessionId: string, attachmentId: string): Promise<Record<string, unknown>> {
+    const attachment = this.db.attachmentForSession(sessionId, attachmentId)
+    if (!attachment) throw new Error('附件不存在或当前 Session 无权访问')
+    if (attachment.kind !== 'image' || !attachment.localPath) {
+      return { id: attachment.id, kind: attachment.kind, filename: attachment.filename, sizeBytes: attachment.sizeBytes, imageRef: attachment.imageRef || null }
+    }
+    if (attachment.sizeBytes > 8 * 1024 * 1024) throw new Error('图片超过 Web 预览大小限制')
+    const bytes = await readFile(attachment.localPath)
+    const mime = attachment.imageRef?.mediaType || attachment.contentType || 'image/png'
+    return {
+      id: attachment.id, kind: attachment.kind, filename: attachment.filename, sizeBytes: attachment.sizeBytes,
+      imageRef: attachment.imageRef || null, dataUrl: `data:${mime};base64,${bytes.toString('base64')}`,
+    }
+  }
+
   startGateway(account: AccountRow | undefined): void {
     if (!account) return
     const id = Number(account.id)
@@ -153,14 +171,17 @@ export class QQChatRuntime {
       return mentionedMember?.display_name || undefined
     })
 
-    const ownAttachments = message.attachments.length
+    const isOwner = message.chatType === 'c2c'
+      || (settings.ownerUserId !== '' && message.senderId === settings.ownerUserId)
+    const acceptGroupMedia = message.chatType !== 'group' || isOwner || settings.groupMembersCanReceiveMedia
+    const ownAttachments = acceptGroupMedia && message.attachments.length
       ? await this.media.ingest(message.accountId, message.messageId, message.attachments)
       : []
-    const quotedAttachments = message.quote?.attachments?.length
+    const quotedAttachments = acceptGroupMedia && message.quote?.attachments?.length
       ? await this.media.ingest(message.accountId, message.quote.messageId || message.messageId, message.quote.attachments)
       : []
-    const storedAttachments = [...ownAttachments, ...quotedAttachments]
-    const safeQuote = message.quote ? sanitizeQuote(message.quote) : undefined
+    const storedAttachments = dedupeAttachments([...ownAttachments, ...quotedAttachments])
+    const safeQuote = message.quote ? sanitizeQuote(message.quote, acceptGroupMedia) : undefined
 
     const messageDbId = this.db.insertMessage({
       accountId: message.accountId, platformMessageId: message.messageId, chatType: message.chatType, groupId: group?.id,
@@ -172,10 +193,10 @@ export class QQChatRuntime {
     const displayEvent: QQChatDisplayEvent = {
       messageId: `db:${messageDbId}`, chatType: message.chatType,
       chatId: message.chatType === 'group' ? message.groupOpenid! : message.senderId,
-      direction: 'inbound', senderId: message.senderId, senderName: message.senderName || 'QQ 用户',
-      isOwner: message.chatType === 'c2c'
-        || (settings.ownerUserId !== '' && message.senderId === settings.ownerUserId),
-      content: message.text,
+      direction: 'inbound', senderId: message.senderId,
+      senderName: message.senderName || member.display_name || (isOwner ? 'Owner' : 'QQ 用户'),
+      isOwner,
+      content: transcriptContent(message.text, storedAttachments),
       quotedText: message.quotedText, mentioned: message.mentioned, createdAt: Date.now(), attachments: publicAttachments(storedAttachments), quote: safeQuote,
     }
       if (settings.memoryEnabled) {
@@ -235,8 +256,43 @@ function isGroupReceiveMode(value: unknown): value is GroupReceiveMode { return 
 function isReplyFormat(value: unknown): value is ReplyFormat { return value === 'smart' || value === 'markdown' || value === 'compat' }
 function shortId(value: string): string { return value.length > 10 ? `…${value.slice(-10)}` : value }
 function publicAttachments(attachments: StoredAttachmentSummary[]): StoredAttachmentSummary[] {
-  return attachments.map(({ localPath: _localPath, ...attachment }) => attachment)
+  return attachments.map(attachment => ({
+    id: String(attachment.id),
+    kind: attachment.kind,
+    filename: String(attachment.filename),
+    ...(attachment.contentType ? { contentType: String(attachment.contentType) } : {}),
+    sizeBytes: Number(attachment.sizeBytes || 0),
+    quoted: Boolean(attachment.quoted),
+  }))
 }
-function sanitizeQuote(quote: QQQuoteInput): QQQuoteInput {
-  return { ...quote, attachments: quote.attachments.map(({ sourceUrl: _sourceUrl, ...attachment }) => attachment) }
+function sanitizeQuote(quote: QQQuoteInput, includeAttachments = true): QQQuoteInput {
+  return {
+    ...quote,
+    attachments: includeAttachments
+      ? quote.attachments.map(({ sourceUrl: _sourceUrl, ...attachment }) => attachment)
+      : [],
+  }
+}
+
+function transcriptContent(text: string, attachments: StoredAttachmentSummary[]): string {
+  const body = text.trim()
+  if (body) return body
+  if (attachments.length === 0) return '(空消息)'
+  return attachments.map(attachment => `[${mediaLabel(attachment.kind)}] ${attachment.filename}`).join('\n')
+}
+
+function mediaLabel(kind: StoredAttachmentSummary['kind']): string {
+  if (kind === 'image') return '图片'
+  if (kind === 'video') return '视频'
+  if (kind === 'voice' || kind === 'audio') return '语音'
+  return '文件'
+}
+
+function dedupeAttachments(attachments: StoredAttachmentSummary[]): StoredAttachmentSummary[] {
+  const seen = new Set<string>()
+  return attachments.filter(attachment => {
+    if (seen.has(attachment.id)) return false
+    seen.add(attachment.id)
+    return true
+  })
 }

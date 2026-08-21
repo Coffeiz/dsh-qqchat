@@ -4,7 +4,7 @@ import { basename, dirname, extname, join } from 'node:path'
 import { lookup } from 'node:dns/promises'
 import { isIP } from 'node:net'
 import type { Context } from '@deepseek-ai/cordis'
-import type { QQAttachmentInput, QQMediaKind, StoredAttachmentSummary } from '../types.js'
+import type { LoggerLike, QQAttachmentInput, QQMediaKind, StoredAttachmentSummary } from '../types.js'
 import type { QQChatDatabase } from '../storage/db.js'
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024
@@ -14,7 +14,7 @@ const RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 export class QQMediaStore {
   readonly root: string
 
-  constructor(private readonly db: QQChatDatabase, private readonly ctx?: Context) {
+  constructor(private readonly db: QQChatDatabase, private readonly ctx?: Context, private readonly logger: LoggerLike = console) {
     this.root = join(dirname(db.path), 'media')
   }
 
@@ -50,7 +50,8 @@ export class QQMediaStore {
           kind, filename: summary.filename, contentType: input.contentType, sizeBytes: summary.sizeBytes,
           localPath: path, imageRef, expiresAt: Date.now() + RETENTION_MS })
         result.push(summary)
-      } catch {
+      } catch (error) {
+        this.logger.warn?.(`[dsh-qqchat] QQ media ingest failed for ${safeFilename(input.filename)}: ${error instanceof Error ? error.message : String(error)}`)
         // Media is optional input. The text turn must remain usable when a download fails.
       }
     }
@@ -97,7 +98,7 @@ export class QQMediaStore {
   }
 
   private async saveImageRef(input: QQAttachmentInput, data: Uint8Array): Promise<StoredAttachmentSummary['imageRef'] | undefined> {
-    const service = (this.ctx as unknown as { attachments?: { saveImage(input: { data: Uint8Array; mediaType: string; name?: string }): Promise<StoredAttachmentSummary['imageRef']> } } | undefined)?.attachments
+    const service = this.ctx?.get('attachments') as { saveImage(input: { data: Uint8Array; mediaType: string; name?: string }): Promise<StoredAttachmentSummary['imageRef']> } | undefined
     const mediaType = sniffImageType(data)
     if (!service || !mediaType) return undefined
     try { return await service.saveImage({ data, mediaType, name: safeFilename(input.filename) }) }

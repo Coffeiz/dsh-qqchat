@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { AgentHandle, AgentOptions, AgentSetup, ModelSelectionRef, PreStepDecision as AgentPreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { CommandInvocation, CommandRuntime, CommandResult } from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -27,6 +28,8 @@ import type {
   QQChatDisplayEvent,
   QQNormalizedMessage,
 } from '../types.js'
+import { MEMORY_SNAPSHOT_TTL_MS, memorySnapshotHash, restoreMemorySnapshotState, shouldRefreshMemorySnapshot } from './memory-snapshot.js'
+import type { MemorySnapshotState } from './memory-snapshot.js'
 
 const DSH_RUNTIME_CONTEXT_SOURCE = '@deepseek-ai/dsh-system-prompt'
 
@@ -37,6 +40,8 @@ interface WorkspaceRegistryService { archivedSessionIds: readonly string[] }
 interface Composition { presetId?: string; setup?: AgentSetup }
 interface ActiveActor { chatType: ChatType; senderId: string }
 
+const MEDIA_TOOL_NAMES = new Set(['qqchat_describe_image', 'qqchat_read_file', 'qqchat_media_info'])
+
 export class DshQQBridge {
   private readonly handles = new Map<string, AgentHandle>()
   private readonly locks = new Map<string, Promise<unknown>>()
@@ -46,6 +51,8 @@ export class DshQQBridge {
   private readonly pendingResets = new Set<string>()
   private readonly activeActors = new Map<string, ActiveActor>()
   private readonly activeAttachments = new Map<string, Set<string>>()
+  private readonly activeMediaReadable = new Map<string, boolean>()
+  private readonly memorySnapshots = new Map<string, MemorySnapshotState>()
   private readonly disposeEvent: () => void
   private readonly disposeToolGate: () => void
   private readonly disposeBootstrapGate: () => void
@@ -73,15 +80,17 @@ export class DshQQBridge {
       const settings = this.db.runtimeSettings(defaultRuntimeSettings(this.config))
       if (settings.groupMembersCanUseTools) return next()
       if (settings.ownerUserId && settings.ownerUserId === actor.senderId) return next()
+      if (MEDIA_TOOL_NAMES.has(exec.name) && settings.groupMembersCanReadMedia) return next()
       return {
         kind: 'deny',
         reason: settings.ownerUserId
-          ? '当前 QQ 群只允许 Owner 使用工具。'
-          : '当前 QQ 群已关闭群成员工具权限，但尚未设置 Owner stable ID。',
+          ? (MEDIA_TOOL_NAMES.has(exec.name) ? '当前 QQ 群已关闭群成员媒体读取权限。' : '当前 QQ 群只允许 Owner 使用工具。')
+          : (MEDIA_TOOL_NAMES.has(exec.name) ? '当前 QQ 群已关闭群成员媒体读取权限。' : '当前 QQ 群已关闭群成员工具权限，但尚未设置 Owner stable ID。'),
       }
     })
-    this.disposeImageTool = registerQQImageTool(ctx, db, (agentId, attachmentId) => this.activeAttachments.get(agentId)?.has(attachmentId) === true)
-    this.disposeMediaTools = registerQQMediaTools(ctx, db, (agentId, attachmentId) => this.activeAttachments.get(agentId)?.has(attachmentId) === true)
+    const canReadMedia = (agentId: string, attachmentId: string) => this.activeMediaReadable.get(agentId) === true && this.activeAttachments.get(agentId)?.has(attachmentId) === true
+    this.disposeImageTool = registerQQImageTool(ctx, db, canReadMedia)
+    this.disposeMediaTools = registerQQMediaTools(ctx, db, canReadMedia)
     this.disposeCommands = this.registerCommands()
   }
 
@@ -101,6 +110,8 @@ export class DshQQBridge {
     this.pendingResets.clear()
     this.activeActors.clear()
     this.activeAttachments.clear()
+    this.activeMediaReadable.clear()
+    this.memorySnapshots.clear()
   }
 
   async ensureChatSession(chatType: ChatType, row: GroupRow | MemberRow): Promise<string> {
@@ -112,8 +123,11 @@ export class DshQQBridge {
     const existing = this.db.getChatSession(event.chatType, Number(row.id))
     if (!existing && !createSession) return undefined
     const { agent, sessionId } = await this.ensureAgent(event.chatType, row)
+    event.sessionId = sessionId
     if (event.isOwner) {
-      this.appendOwnerMessageIfMissing(agent.session, event)
+      const hasImages = event.attachments?.some(attachment => attachment.kind === 'image' && this.db.attachmentById(attachment.id)?.imageRef) === true
+      if (!hasImages || await this.imageRouteAvailable(agent)) this.appendOwnerMessageIfMissing(agent.session, event)
+      else this.appendDisplayIfMissing(agent.session, event)
       return sessionId
     }
     this.appendDisplayIfMissing(agent.session, event)
@@ -146,14 +160,20 @@ export class DshQQBridge {
 
       if (this.db.runtimeSettings(defaultRuntimeSettings(this.config)).memoryEnabled) {
         const contextText = message.chatType === 'group'
-          ? this.memory.contextForGroup(group!, member, message.messageId || undefined)
+          ? this.memory.contextForGroup(group!, member)
           : this.memory.contextForMember(member)
-        agent.inject(createUserMessage({
-          source: { kind: 'plugin', plugin: DSH_RUNTIME_CONTEXT_SOURCE, form: 'snapshot', sections: [{ name: 'qq-chat-context', text: contextText }] },
-          content: [{ type: 'text', text: contextText }],
-        }))
+        this.injectMemorySnapshot(agent, sessionId, contextText)
       }
 
+      const currentText = this.memory.currentMessageText(message) + mediaPrompt(attachments)
+      const currentContent: ContentBlock[] = [{ type: 'text', text: currentText }]
+      if (attachments.length && await this.imageRouteAvailable(agent)) {
+        for (const attachment of attachments) {
+          if (attachment.kind === 'image' && attachment.imageRef) {
+            currentContent.push({ type: 'image', attachment: attachment.imageRef })
+          }
+        }
+      }
       const current = createUserMessage({
         source: {
           kind: 'qq-chat', botId: String(message.accountId), chatType: message.chatType,
@@ -163,11 +183,15 @@ export class DshQQBridge {
           form: 'notice',
           summary: `QQ ${message.chatType === 'group' ? '群聊' : '私聊'}消息 · ${message.senderName || shortId(message.senderId)}`,
         },
-        content: [{ type: 'text', text: this.memory.currentMessageText(message) + mediaPrompt(attachments) }],
+        content: currentContent,
       })
 
       this.pending.set(String(sessionId), { text: '' })
       this.activeAttachments.set(String(sessionId), new Set(attachments.map(item => item.id)))
+      const settings = this.db.runtimeSettings(defaultRuntimeSettings(this.config))
+      this.activeMediaReadable.set(String(sessionId), message.chatType !== 'group'
+        || (settings.ownerUserId !== '' && settings.ownerUserId === message.senderId)
+        || settings.groupMembersCanReadMedia)
       this.activeActors.set(String(sessionId), { chatType: message.chatType, senderId: message.senderId })
       try {
         agent.followup(current)
@@ -175,6 +199,7 @@ export class DshQQBridge {
       } finally {
         this.activeActors.delete(String(sessionId))
         this.activeAttachments.delete(String(sessionId))
+        this.activeMediaReadable.delete(String(sessionId))
       }
 
       const pending = this.pending.get(String(sessionId))
@@ -203,7 +228,34 @@ export class DshQQBridge {
     if (event.type === 'request/header') {
       const { config } = event.data.header
       if (config.provider && config.model) this.routes.set(id, { provider: config.provider, model: config.model })
+      return
     }
+    if ((event.type as string) === 'compaction/end') {
+      const state = this.memorySnapshots.get(id)
+      if (state) state.stale = true
+    }
+  }
+
+  private injectMemorySnapshot(agent: AgentHandle['agent'], sessionId: string, contextText: string): void {
+    const now = Date.now()
+    const hash = memorySnapshotHash(contextText)
+    const previous = this.memorySnapshots.get(sessionId) || this.restoreMemorySnapshot(agent.session)
+    if (shouldRefreshMemorySnapshot(previous, contextText, now, MEMORY_SNAPSHOT_TTL_MS)) {
+      agent.inject(createUserMessage({
+        source: { kind: 'plugin', plugin: DSH_RUNTIME_CONTEXT_SOURCE, form: 'snapshot', sections: [{ name: 'qq-chat-context', text: contextText }] },
+        content: [{ type: 'text', text: contextText }],
+      }))
+      this.memorySnapshots.set(sessionId, { hash, lastInjectedAt: now, stale: false })
+      return
+    }
+    if (!previous) return
+    // Keep the cache fresh without writing another runtime-context event.
+    previous.lastInjectedAt = now
+    this.memorySnapshots.set(sessionId, previous)
+  }
+
+  private restoreMemorySnapshot(session: Session): MemorySnapshotState | undefined {
+    return restoreMemorySnapshotState(session.events as unknown as Parameters<typeof restoreMemorySnapshotState>[0], DSH_RUNTIME_CONTEXT_SOURCE)
   }
 
   private async ensureAgent(chatType: ChatType, row: GroupRow | MemberRow): Promise<{ agent: AgentHandle['agent']; sessionId: string }> {
@@ -278,7 +330,7 @@ export class DshQQBridge {
 
   private appendDisplayIfMissing(session: Session, event: QQChatDisplayEvent): void {
     if (session.events.some(item => item.type === 'qqchat/message' && item.data.messageId === event.messageId)) return
-    session.append('qqchat/message', event)
+    session.append('qqchat/message', displayEventPayload(event))
   }
 
   private appendOwnerMessageIfMissing(session: Session, event: QQChatDisplayEvent): void {
@@ -294,7 +346,7 @@ export class DshQQBridge {
         ...(event.senderName ? { senderName: event.senderName } : {}),
         messageId: event.messageId, mentioned: event.mentioned,
       },
-      content: [{ type: 'text', text: event.content }],
+      content: transcriptContent(event, this.db),
     }), { surfaceOp: 'append' })
   }
 
@@ -337,6 +389,15 @@ export class DshQQBridge {
     }
     if (this.config.maxTokens) options.maxTokens = this.config.maxTokens
     return options
+  }
+
+  private async imageRouteAvailable(agent: AgentHandle['agent']): Promise<boolean> {
+    const route = this.selection(agent)?.current || { provider: agent.options.provider, model: agent.options.model }
+    if (!route.provider || !route.model) return false
+    try {
+      const info = await this.ctx.llm.resolveModelInfo(route.provider, route.model)
+      return info.inputModalities?.includes('image') === true
+    } catch { return false }
   }
 
   private ensureSelection(agent: AgentHandle['agent']): ModelSelectionRef | undefined {
@@ -388,11 +449,11 @@ export class DshQQBridge {
         .map(command => `/${command.name}${command.input?.hint ? ` ${command.input.hint}` : ''} — ${command.description}`),
       '',
       'QQChat 会话',
-      ...commands.filter(command => ['new', 'reset', 'clear', 'model', 'stop', 'status'].includes(command.name))
+      ...commands.filter(command => ['qqnew', 'qqreset', 'qqclear', 'qqmodel', 'qqstop', 'qqstatus'].includes(command.name))
         .map(command => `/${command.name}${command.input?.hint ? ` ${command.input.hint}` : ''} — ${command.description}`),
       '',
       'QQChat 工具',
-      ...commands.filter(command => ['ping', 'version', 'help', 'commands'].includes(command.name))
+      ...commands.filter(command => ['qqping', 'qqversion', 'qqhelp', 'qqcommands'].includes(command.name))
         .map(command => `/${command.name} — ${command.description}`),
     ].join('\n')
   }
@@ -405,20 +466,20 @@ export class DshQQBridge {
     const register = (name: string, description: string, handler: (invocation: CommandInvocation) => CommandResult | Promise<CommandResult>, input?: string): (() => void) =>
       this.ctx.commands.register({ name, description, ...(input ? { input: { hint: input } } : {}), handler })
     const disposers = [
-      register('help', '查看 QQChat 和 DSH 命令', invocation => ({ kind: 'success', text: this.commandHelp(invocation.agent as AgentHandle['agent']) })),
-      register('commands', '查看 QQChat 和 DSH 命令', invocation => ({ kind: 'success', text: this.commandHelp(invocation.agent as AgentHandle['agent']) })),
-      register('new', '开始新会话（保留旧 Session）', invocation => { this.requestReset(String(invocation.agent.id)); return { kind: 'success', text: '已开启新会话，下一条消息将进入新的 Session。' } }),
-      register('reset', '开始新会话（/new 别名）', invocation => { this.requestReset(String(invocation.agent.id)); return { kind: 'success', text: '已开启新会话，下一条消息将进入新的 Session。' } }),
-      register('clear', '开始新会话（/new 别名）', invocation => { this.requestReset(String(invocation.agent.id)); return { kind: 'success', text: '已开启新会话，下一条消息将进入新的 Session。' } }),
-      register('model', '查看或切换当前会话模型', invocation => this.modelCommand(invocation), '[provider/]model'),
-      register('stop', '中止当前生成', invocation => {
+      register('qqhelp', '查看 QQChat 和 DSH 命令', invocation => ({ kind: 'success', text: this.commandHelp(invocation.agent as AgentHandle['agent']) })),
+      register('qqcommands', '查看 QQChat 和 DSH 命令', invocation => ({ kind: 'success', text: this.commandHelp(invocation.agent as AgentHandle['agent']) })),
+      register('qqnew', '开始新会话（保留旧 Session）', invocation => { this.requestReset(String(invocation.agent.id)); return { kind: 'success', text: '已开启新会话，下一条消息将进入新的 Session。' } }),
+      register('qqreset', '开始新会话（/qqnew 别名）', invocation => { this.requestReset(String(invocation.agent.id)); return { kind: 'success', text: '已开启新会话，下一条消息将进入新的 Session。' } }),
+      register('qqclear', '开始新会话（/qqnew 别名）', invocation => { this.requestReset(String(invocation.agent.id)); return { kind: 'success', text: '已开启新会话，下一条消息将进入新的 Session。' } }),
+      register('qqmodel', '查看或切换当前会话模型', invocation => this.modelCommand(invocation), '[provider/]model'),
+      register('qqstop', '中止当前生成', invocation => {
         if (invocation.agent.status !== 'running') return { kind: 'success', text: '当前没有进行中的生成。' }
         invocation.agent.cancel({ kind: 'user' })
         return { kind: 'success', text: '已中止当前生成。' }
       }),
-      register('ping', '测试 QQChat 连通性', () => ({ kind: 'success', text: 'pong 🏓' })),
-      register('version', '查看 QQChat 版本', () => ({ kind: 'success', text: `dsh-qqchat v${this.config.source === 'dsh-qqchat' ? '0.1.0-alpha.1' : this.config.source}` })),
-      register('status', '查看当前会话状态', invocation => this.statusCommand(invocation.agent as AgentHandle['agent'])),
+      register('qqping', '测试 QQChat 连通性', () => ({ kind: 'success', text: 'pong 🏓' })),
+      register('qqversion', '查看 QQChat 版本', () => ({ kind: 'success', text: `dsh-qqchat v${this.config.source === 'dsh-qqchat' ? '0.1.0-alpha.1' : this.config.source}` })),
+      register('qqstatus', '查看当前会话状态', invocation => this.statusCommand(invocation.agent as AgentHandle['agent'])),
     ]
     return () => { for (const dispose of disposers.reverse()) dispose() }
   }
@@ -437,14 +498,14 @@ export class DshQQBridge {
           `当前模型：${ref.current?.provider}/${ref.current?.model}`,
           providers.length ? `可用提供方：${providers.map(provider => provider.id).join(', ')}` : '',
           models.length ? `当前提供方模型：${models.slice(0, 20).map(model => `${model.id}${model.name !== model.id ? `（${model.name}）` : ''}`).join(', ')}` : '',
-          '切换用法：/model provider/model 或 /model model',
+          '切换用法：/qqmodel provider/model 或 /qqmodel model',
         ].filter(Boolean).join('\n'),
       }
     }
     const separator = args.indexOf('/')
     const provider = separator > 0 ? args.slice(0, separator).trim() : ref.current?.provider || ''
     const model = separator > 0 ? args.slice(separator + 1).trim() : args
-    if (!provider || !model) return { kind: 'error', text: '用法：/model provider/model' }
+    if (!provider || !model) return { kind: 'error', text: '用法：/qqmodel provider/model' }
     if (!this.ctx.llm.listProviders().some(item => item.id === provider)) {
       return { kind: 'error', text: `未找到提供方：${provider}` }
     }
@@ -490,6 +551,54 @@ function mediaPrompt(attachments: StoredAttachmentSummary[]): string {
   if (!attachments.length) return ''
   const lines = attachments.map(item => `- ${item.kind}: ${item.filename} (attachment_id=${item.id}${item.quoted ? ', 引用消息附件' : ''})`)
   return `\n\n[QQ 媒体附件]\n${lines.join('\n')}\n图片可使用 qqchat_describe_image 查看。`
+}
+
+function transcriptContent(event: QQChatDisplayEvent, db: QQChatDatabase): ContentBlock[] {
+  const attachments = event.attachments || []
+  const renderableImages = attachments.filter(attachment => attachment.kind === 'image' && db.attachmentById(attachment.id)?.imageRef)
+  const imagePlaceholderLines = new Set(renderableImages.map(attachment => `[图片] ${attachment.filename}`))
+  const text = event.content.split('\n').filter(line => !imagePlaceholderLines.has(line)).join('\n').trim()
+  const content: ContentBlock[] = [{ type: 'text', text }]
+  for (const attachment of attachments) {
+    const imageRef = attachment.kind === 'image' ? db.attachmentById(attachment.id)?.imageRef : undefined
+    if (imageRef) {
+      content.push({ type: 'image', attachment: imageRef })
+    }
+  }
+  return content
+}
+
+function displayEventPayload(event: QQChatDisplayEvent): QQChatDisplayEvent {
+  const attachments = (event.attachments || []).map(attachment => ({
+    id: String(attachment.id), kind: attachment.kind, filename: String(attachment.filename),
+    ...(attachment.contentType ? { contentType: String(attachment.contentType) } : {}),
+    sizeBytes: Number(attachment.sizeBytes || 0), quoted: Boolean(attachment.quoted),
+  }))
+  const quote = event.quote ? {
+    ...(event.quote.messageId ? { messageId: String(event.quote.messageId) } : {}),
+    ...(event.quote.senderId ? { senderId: String(event.quote.senderId) } : {}),
+    ...(event.quote.senderName ? { senderName: String(event.quote.senderName) } : {}),
+    text: String(event.quote.text || ''),
+    attachments: event.quote.attachments.map(attachment => ({
+      filename: String(attachment.filename),
+      ...(attachment.contentType ? { contentType: String(attachment.contentType) } : {}),
+      ...(attachment.size !== undefined ? { size: Number(attachment.size) } : {}),
+      ...(attachment.width !== undefined ? { width: Number(attachment.width) } : {}),
+      ...(attachment.height !== undefined ? { height: Number(attachment.height) } : {}),
+      ...(attachment.durationMs !== undefined ? { durationMs: Number(attachment.durationMs) } : {}),
+      ...(attachment.platformFileId ? { platformFileId: String(attachment.platformFileId) } : {}),
+      ...(attachment.quoted !== undefined ? { quoted: Boolean(attachment.quoted) } : {}),
+      ...(attachment.kind ? { kind: attachment.kind } : {}),
+    })),
+  } : undefined
+  return {
+    messageId: String(event.messageId), chatType: event.chatType, chatId: String(event.chatId),
+    direction: event.direction, senderId: String(event.senderId), senderName: String(event.senderName),
+    ...(event.isOwner !== undefined ? { isOwner: Boolean(event.isOwner) } : {}),
+    content: String(event.content), quotedText: String(event.quotedText), mentioned: Boolean(event.mentioned),
+    createdAt: Number(event.createdAt), ...(event.sessionId ? { sessionId: String(event.sessionId) } : {}),
+    attachments, ...(quote ? { quote } : {}),
+  }
 }
 
 function extractText(content: readonly unknown[]): string {

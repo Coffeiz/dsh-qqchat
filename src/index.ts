@@ -28,7 +28,7 @@ export function apply(ctx: Context, inputConfig: QQChatConfigInput = {}): void {
   const api = new QQApiClient(db, config)
   const auth = new QQBindService(db, config)
   const memory = new MemoryEngine(ctx, db, config, logger)
-  const media = new QQMediaStore(db, ctx)
+  const media = new QQMediaStore(db, ctx, logger)
   const bridge = new DshQQBridge(ctx, db, memory, config, logger)
   const runtime = new QQChatRuntime(ctx, db, api, auth, memory, bridge, config, logger, media)
 

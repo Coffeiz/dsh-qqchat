@@ -12,6 +12,10 @@ export const Menu = DshMenu as unknown as import('react').ComponentType<any>
 export const { useCallback, useEffect, useMemo, useState, useSyncExternalStore } = React
 export const h = React.createElement
 
+let qqRpc: Rpc | undefined
+export function setQQRpc(rpc: Rpc): void { qqRpc = rpc }
+export function getQQRpc(): Rpc | undefined { return qqRpc }
+
 export type ChatType = 'c2c' | 'group'
 export type GroupReceiveMode = 'auto' | 'mention' | 'silent'
 export type ReplyFormat = 'smart' | 'markdown' | 'compat'
@@ -34,7 +38,7 @@ export interface Ctx {
   slots: SlotRegistry
 }
 export interface Account { id: number; appId: string; enabled: boolean; gatewayStatus: string; gatewayLastError?: string | null }
-export interface Settings { memoryEnabled: boolean; groupReceiveMode: GroupReceiveMode; groupReplyFormat: ReplyFormat; directReplyFormat: ReplyFormat; groupMembersCanUseTools: boolean; ownerUserId: string }
+export interface Settings { memoryEnabled: boolean; groupReceiveMode: GroupReceiveMode; groupReplyFormat: ReplyFormat; directReplyFormat: ReplyFormat; groupMembersCanUseTools: boolean; groupMembersCanReceiveMedia: boolean; groupMembersCanReadMedia: boolean; ownerUserId: string }
 export interface KnownMember { id: number; platformUserId: string; displayName: string; lastSeenAt: number }
 export interface ChatItem { chatType: ChatType; rowId: number; platformId: string; displayName: string; dshSessionId: string | null; lastMessageAt: number | null; messageCount: number }
 export interface Memory { profile: string; summary: string; daily: string; memory: string; pattern: string }
@@ -43,7 +47,7 @@ export interface ChatInfo { chatType: ChatType; rowId: number; title: string; pl
 export interface PluginLog { id: number; time: number; level: LogLevel; message: string }
 export interface QQAttachmentData { id: string; kind: string; filename: string; contentType?: string; sizeBytes: number; quoted?: boolean; imageRef?: Record<string, unknown> }
 export interface QQQuoteData { messageId?: string; senderId?: string; senderName?: string; text: string; attachments?: QQAttachmentData[] }
-export interface QQEventData { messageId: string; chatType: ChatType; chatId: string; direction: 'inbound' | 'outbound'; senderId: string; senderName: string; content: string; quotedText: string; mentioned: boolean; createdAt: number; attachments?: QQAttachmentData[]; quote?: QQQuoteData | null }
+export interface QQEventData { messageId: string; chatType: ChatType; chatId: string; direction: 'inbound' | 'outbound'; senderId: string; senderName: string; isOwner?: boolean; content: string; quotedText: string; mentioned: boolean; createdAt: number; sessionId?: string; attachments?: QQAttachmentData[]; quote?: QQQuoteData | null }
 export interface QQNode { data: QQEventData }
 export interface SessionUtilityProps { sessionId: string }
 export interface SidebarActionProps { wide: boolean; rpc: Rpc; sessions: SessionsService }
@@ -71,13 +75,15 @@ const css = `
    DSH primitives. Message colors use the host token system directly. */
 .qqs{display:block;width:100%;min-width:0}.qqsHead{width:100%}.qqSettingsGroup{display:block;width:100%;min-width:0;margin-top:22px}.qqSettingsGroup h3{margin:0 0 8px;font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary)}.qqSettingsGroup .qqSetting{display:flex;width:100%;min-width:0;flex:0 0 auto;padding:12px 0;border-bottom:1px solid var(--dsw-alias-border-l1)}.qqSettingsGroup .qqSetting:last-child{border-bottom:0}.qqSetting>div:first-child{flex:1 1 auto;min-width:0}.qqControl{flex:0 0 auto}.qqChoiceButtons{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px}.qqSettingsGroup select{font:inherit;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:5px 8px}.qqCheckRow{display:flex;align-items:flex-start;gap:10px;cursor:pointer}.qqCheckRow input{flex:none;width:16px;height:16px;margin:2px 0 0;accent-color:var(--dsw-alias-button-primary-fill);cursor:pointer}.qqConnect{display:flex;flex-direction:column;align-items:center;gap:14px;padding:24px 0;text-align:center}.qqTranscript{margin:16px 0}.qqTranscriptBody{max-width:min(78%,680px)}.qqBubble{border:0;border-radius:18px;padding:9px 13px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}.qqTranscript.out .qqBubble{border-radius:18px;background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground)}.qqTranscriptMeta{margin:0 4px 4px;font-size:12px;color:var(--dsw-alias-label-secondary)}.qqQuote{border-color:var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1)}
 .qqWideModal{width:min(760px,calc(100vw - 48px));max-height:calc(100vh - 48px);min-height:0;overflow:hidden}.qqModalContent{min-height:0;overflow:auto}.qqModalContent .qqMemoryGrid{min-width:0}.qqModalContent .qqLog{overflow-wrap:anywhere;word-break:break-word}
-`.concat('.qqQuoteSender{margin-top:4px;font-size:10px;color:var(--dsw-alias-label-secondary)}.qqMediaList{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}.qqMediaCard{display:flex;align-items:center;gap:6px;max-width:100%;padding:6px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);font-size:11px}.qqMediaKind{color:var(--dsw-alias-brand-primary);font-weight:650}.qqMediaName{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.qqMediaSize,.qqMediaQuoted{color:var(--dsw-alias-label-secondary)}')
+`.concat('.qqQuoteSender{margin-top:4px;font-size:10px;color:var(--dsw-alias-label-secondary)}.qqMediaList{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}.qqMediaCard{display:flex;align-items:center;gap:6px;max-width:100%;padding:6px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);font-size:11px}.qqMediaKind{color:var(--dsw-alias-brand-primary);font-weight:650}.qqMediaPreview{width:42px;height:42px;object-fit:cover;border-radius:6px}.qqMediaName{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.qqMediaSize,.qqMediaQuoted{color:var(--dsw-alias-label-secondary)}')
+
+const qqThemeOverrides = '.qqTranscript.out .qqBubble{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}'
 
 export function installStyles(): () => void {
   if (typeof document === 'undefined' || document.querySelector(`style[data-plugin-css="${STYLE_ID}"]`)) return () => {}
   const node = document.createElement('style')
   node.dataset.pluginCss = STYLE_ID
-  node.textContent = css
+  node.textContent = css + qqThemeOverrides
   document.head.appendChild(node)
   return () => node.remove()
 }
