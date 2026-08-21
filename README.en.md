@@ -36,10 +36,10 @@
 | Message formats | Smart, Markdown or Plain compatibility | Group and direct-chat formats are configured separately; groups default to Plain compatibility |
 | Direct-chat streaming | Optionally uses QQ's official streaming message API for private chats | Private chats only; Plain compatibility disables it automatically; some clients may not display streaming |
 | Quotes and mentions | Preserves quoted messages and resolves QQ mentions to display names | Stable IDs remain in metadata |
-| Memory system | Stores group, member and direct-user memory | Can be disabled; disabling does not delete existing memory |
+| Memory system | Stores group, member and direct-user memory; user memory can be reused across groups under the same Bot | Group relationships and group events stay scoped; can be disabled |
 | Memory reflection | Converts recent daily notes into long-term memory | Runs asynchronously after idle or batch thresholds |
 | Media and file permissions | Separately controls receiving media, reading attachments, and regular tools | Owner and direct chats are unrestricted by default |
-| Tool permissions | Separately controls whether group members may use regular Agent tools | Owner is matched by stable user ID |
+| Permission management | Separately controls group-member tools, media reading and file receiving | Owner is matched by stable user ID |
 | Native DSH commands | Runs `/compact`, `/goal`, `/plan`, `/qqmodel`, `/qqstatus` and more directly from QQ | Commands do not go through the model; `/qqhelp` lists the full set |
 | Native DSH UI | Uses the normal Session list, Conversation surface and composer styling | QQ Sessions remain ungrouped in DSH |
 | Diagnostics | Shows plugin logs in Settings | Useful for connection and delivery troubleshooting |
@@ -68,7 +68,7 @@
     <td width="50%" valign="top">
       <img src="./docs/assets/记忆系统.jpg" width="100%" alt="QQ Chat memory system">
       <h3>Memory system</h3>
-      <p>The plugin maintains separate memory for groups, members and direct users. Member memory supports profiles, group nicknames, historical nicknames, behavior patterns and long-term notes; recent messages are organized asynchronously. Memory is refreshed as Session context when needed, and can be disabled without deleting stored data.</p>
+      <p>The plugin maintains separate memory for groups, members and direct users. Under the same Bot, user memory is reusable across groups by stable user ID; group relationships and group events remain scoped to their original group. Member memory supports profiles, group nicknames, historical nicknames, behavior patterns and long-term notes; recent messages are organized asynchronously. Memory is refreshed as Session context when needed, and can be disabled without deleting stored data.</p>
     </td>
   </tr>
 </table>
@@ -145,7 +145,7 @@ Groups default to Plain compatibility format. Group and direct-chat formats can 
 
 ## Commands
 
-Messages beginning with `/` are handled directly by the command system and are not sent to the model. Native DSH commands keep their original names; QQChat commands use the `qq` prefix. In a group, write `@Bot /help` or `@Bot /qqhelp`.
+Messages beginning with `/` are handled directly by the command system and are not sent to the model. Native DSH commands keep their original names; QQChat commands use the `qq` prefix. In a group, write `@Bot /qqhelp`.
 
 | Command | Purpose |
 | --- | --- |
@@ -188,11 +188,15 @@ QQ Chat stores:
 
 Reflection runs asynchronously after the chat is idle or enough messages have accumulated. The **QQ Memory** action at the top of a QQ Session shows group and member memory. Memory snapshots refresh when a Session starts, the memory context expires, or the Session is compacted; continuous conversation does not repeatedly write the full memory. Enabled memory may reduce context-cache hit rate or increase input tokens, and can be disabled under **Settings -> QQ Chat -> Memory system** without deleting stored data.
 
-## Tool permissions
+## Permission management
 
-When **Group members can use tools** is enabled, group-triggered Agent turns may use the tools exposed by the current preset. When disabled, only the configured Owner stable ID may execute tools; other group members can still chat normally.
+The settings page keeps media/file permissions separate from regular Agent-tool permissions:
 
-Owner matching uses a stable QQ user ID, not a nickname.
+- **Receive group-member media/files** controls whether images, files, audio and video are downloaded, stored and shown in the Session.
+- **Allow group members to read media/files** controls whether a group member's Agent turn may call QQChat media tools for the current attachment.
+- **Group members can use tools** controls whether group members may use regular Agent tools exposed by the current preset.
+
+When regular tools or media reading are disabled, group members can still send normal text and receive replies. Owner matching uses a stable QQ user ID, not a nickname.
 
 ## Message display
 
@@ -220,14 +224,11 @@ QR authorization and connection
 Group receive mode
 Group and direct-chat reply formats
 Memory system [on/off]
-Media and file permissions and regular tool permissions are independent settings:
-
-- **Receive group-member media/files** controls whether images, files, audio, and video are downloaded, stored, and shown in the session.
-- **Allow group members to read media/files** controls whether their Agent turns may call QQChat media tools for the current attachment.
-- **Group members can use tools** controls access to regular Agent tools.
 Owner stable ID
 Diagnostics and logs
 ```
+
+Media/file permissions and regular tool permissions are independent settings. See [Permission management](#permission-management) for their behavior.
 
 The Settings page does not contain chat lists, transcripts or memory browsing. Those remain in the normal DSH Session and Conversation surfaces.
 
@@ -247,7 +248,7 @@ Memory scopes are isolated as follows:
 - **Member:** typed profile, pattern, summary, daily and long-term memory for one stable sender.
 - **Direct chat:** uses the member scope for that QQ user.
 
-The same stable sender may retain member memory across groups under the same Bot. Group relationships and group-specific facts never cross group scopes. Reflection runs after roughly 120 seconds of inactivity or 20 unreflected messages, and can also compress older daily records after the configured thresholds.
+The same stable sender may retain user memory across groups under the same Bot. Group relationships and group-specific facts never cross group scopes, and different Bots keep separate user-memory scopes. Reflection runs after roughly 120 seconds of inactivity or 20 unreflected messages, and can also compress older daily records after the configured thresholds.
 
 ## Development
 

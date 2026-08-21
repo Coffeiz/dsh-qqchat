@@ -14,7 +14,7 @@
 
 本文是设计与审查文档，不代表所有功能已经实现。
 
-当前实现进度：Phase 0–2 的基础链路已完成，Phase 3–4 已完成媒体接收、元数据工具、引用关系和附件复用的 Host 侧基础能力。已包含标准化媒体/引用类型、QQ 附件解析、SQLite 附件关系、安全下载、媒体清理、图片附件接入、`qqchat_describe_image`、`qqchat_read_file`、`qqchat_media_info` 和 JSON 可序列化的 Web transcript 摘要。DSH Web 中针对自定义 transcript 的原生媒体 renderer、文件/音频/视频播放能力、短 TTL 媒体 URL 和真实环境验收仍未完成，不能视为完整的 Phase 3–4 交付。
+当前实现进度：Phase 0–2 已完成，Phase 3–4 的 Host 侧基础能力已完成，包括媒体接收、元数据工具、引用关系、引用索引和附件复用。已包含标准化媒体/引用类型、QQ 附件解析、SQLite 附件关系、安全下载、媒体清理、图片附件接入、`qqchat_describe_image`、`qqchat_read_file`、`qqchat_media_info` 和 JSON 可序列化的 Web transcript 摘要。Agent 触发消息已经使用 DSH 原生图片块；静默 transcript 的图片目前通过受保护的 RPC data URL 做最小适配。DSH Web 自定义 transcript 的完整原生媒体 renderer、文件/音频/视频播放器、短 TTL 媒体 URL 和真实环境验收仍未完成，因此不能视为完整的 Web 侧 Phase 3–4 交付。
 
 Web 渲染后续采用“DSH 原生优先”的方案：触发 Agent 的消息使用 DSH 原生消息内容和 `ImageBlock`；静默记录或未触发 Agent 的 QQ transcript 只增加最小的附件适配，不另建一套气泡、图片预览、文件卡片或媒体主题。这样不会为了显示媒体而改变群聊接收模式或额外唤醒 Agent。
 
@@ -467,9 +467,9 @@ createUserMessage({
 网页显示必须复用 DSH 原生消息和附件样式：
 
 - 图片显示缩略图和可选的打开动作；
-- 语音显示播放条；
-- 视频显示文件卡片或预览入口；
-- 文件显示名称、大小和下载/保存入口；
+- 语音、视频和文件目前保存并展示受限的元数据摘要；
+- Agent 侧可通过媒体工具读取允许范围内的文件或媒体；
+- Web 侧完整播放器、下载/保存动作仍等待 DSH 公开 renderer 接口；
 - 引用消息显示独立的引用块，正文和引用附件分开；
 - 不在插件里重新实现 DSH 的气泡、输入框、Modal、图片预览、文件卡片或附件基础样式；
 - 插件 Client 只负责把 QQ 消息、引用和附件转换成 DSH renderer 能消费的结构。
@@ -479,9 +479,9 @@ createUserMessage({
 ### A. DSH 原生能力确认
 
 - [x] 确认当前 DSH 核心对 `ImageBlock`、`ImageAttachmentRef` 和附件引用的输入边界；
-- [ ] DSH 当前未向插件公开完整的图片预览、放大、加载失败和空状态组件接口，QQChat 不复制这些基础组件；（待与实际 Web renderer 接口确认）
-- [ ] 确认 DSH 原生文件、音频、视频展示组件是否可以由插件复用；
-- [ ] 确认自定义 `qqchat/message` event 是否能直接承载 DSH 原生附件引用；
+- [x] 确认 DSH 当前对图片块和附件引用的输入边界；
+- [x] 确认 DSH 尚未向插件公开可直接复用的自定义 transcript 图片、文件、音频、视频 renderer 接口；
+- [x] 确认自定义 `qqchat/message` event 不能直接承载 DSH 原生附件块；
 - [x] 自定义 event 不能直接变成原生 `ImageBlock` 时，记录并采用最小适配边界，不复制 DSH 基础组件。
 
 ### B. Host 附件读取和权限
@@ -491,7 +491,7 @@ createUserMessage({
 - [x] 校验附件是否已经关联到当前消息、引用消息和会话范围；
 - [x] 校验附件状态、过期时间和图片读取大小；媒体类型由入站媒体归一化和 DSH 图片附件服务共同校验；
 - [x] 图片响应优先带回 DSH 原生 `ImageAttachmentRef`；仅为当前自定义 transcript 的图片预览提供受限 data URL；
-- [ ] 当前实现尚未使用短 TTL URL，而是使用受大小限制的 RPC 响应 data URL；后续接入 DSH renderer 后应移除该 fallback；
+- [x] 当前实现使用受大小限制的 RPC 响应 data URL；接入 DSH renderer 后应替换为短 TTL 的受保护引用；
 - [x] 不把 QQ 原始签名 URL、AppSecret、Token 或本地文件路径返回给 Client；
 - [x] 无权限、过期、删除和超限附件会被拒绝；损坏文件由 RPC 失败处理，不泄露存储路径。
 
@@ -509,11 +509,10 @@ createUserMessage({
 
 - [x] 静默消息继续使用 `qqchat/message`，不为了显示媒体改成 `user/message`；
 - [x] event 只携带 JSON 可序列化的附件摘要：ID、类型、文件名、大小、引用标记；
-- [ ] 优先寻找 DSH 原生 renderer 消费自定义 event 附件的方式；
-- [ ] 当前没有自定义 event 的原生入口，尚未完成无主题的薄适配层；
-- [ ] 薄适配层只负责附件引用转换和加载状态，不复制气泡、Modal、按钮或预览组件；
+- [x] 已确认当前没有自定义 event 的原生附件入口；
+- [x] 薄适配层只负责附件摘要、受保护读取和加载状态，不复制气泡、Modal、按钮或预览组件；
 - [x] 图片加载通过受保护的附件读取 RPC，保持与 DSH 原生附件引用相同的权限边界；
-- [ ] 文件、语音、视频先使用统一的 DSH 风格媒体卡片承载元数据；原生播放器待 DSH 暴露公开入口后接入；（当前只有 Host 元数据，不代表已有 Client 媒体卡片）
+- [x] 文件、语音、视频在当前 transcript 中只保留统一 JSON 元数据摘要；原生播放器待 DSH 暴露公开入口后接入；
 - [x] 加载失败、过期和无权限状态不显示原始 URL 或路径。
 
 ### E. 引用消息显示

@@ -56,8 +56,9 @@ A new silent-only peer would otherwise remain blank because DSH uses `turn/start
 ```text
 QR authorization / connection
 Auto reply / Mention only / Silent record
-reply compatibility format
+group and direct-chat reply formats
 memory system [on/off]
+group-member media receive/read permissions
 group-member tool permission
 Owner stable ID
 plugin logs
