@@ -17,11 +17,13 @@
 
 <p><em>Chat in QQ, then view the complete Session, memory and tool activity in DSH Web.</em></p>
 
-</div>
-
 `dsh-qqchat` is an official QQ Bot plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). It maps QQ groups and direct chats to ordinary DSH Sessions and uses DSH's native Conversation, Agent, command and tool surfaces.
 
+> This is a Vibe Coding project, so code quality and engineering completeness may need improvement. If you find a problem or have a better implementation idea, please open an [Issue](https://github.com/Coffeiz/dsh-qqchat/issues) or submit a [Pull Request](https://github.com/Coffeiz/dsh-qqchat/pulls).
+
 > This uses official QQ Bot authorization. It is not QR login for a personal QQ account.
+
+</div>
 
 ## Features
 
@@ -156,6 +158,20 @@ Messages beginning with `/` are handled directly by the command system and are n
 | `/plan` | Enter or leave Plan mode |
 | `/feedback` | Submit feedback |
 | `/permission` | View or switch tool permission presets |
+
+### Where `/feedback` goes
+
+`/feedback` uses DSH's native feedback mechanism. It does not create a GitHub Issue or send feedback directly to the QQChat authors. By default, feedback is written only to the current DSH Session's local log and does not leave the machine.
+
+It is uploaded to a configured OTLP service only when DSH session telemetry is explicitly enabled:
+
+| DSH telemetry mode | Destination |
+| --- | --- |
+| `DISABLED` (default) | Local DSH Session only |
+| `FEEDBACK_ONLY` | The current Session log suffix is sent to the configured OTLP service when `/feedback` is recorded |
+| `FULL` | Session events are sent to the configured OTLP service in real time; `/feedback` also records a feedback event |
+
+Feedback may include the current Session's conversation, tool arguments, tool results and workspace path. Check your DSH telemetry settings before submitting sensitive information.
 
 `/export` is a browser-only DSH Web command and is not available from QQ. Model changes apply independently to each group or direct Session while preserving the existing conversation.
 

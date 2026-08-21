@@ -18,9 +18,11 @@
 
 <p><em>在 QQ 中聊天，在 DSH Web 中查看完整 Session、记忆和工具调用。</em></p>
 
-</div>
-
 `dsh-qqchat` 是 DeepSeek Harness（DSH）的 QQ 官方 Bot 插件，支持 QQ 群聊、私聊、会话隔离、记忆系统和 DSH 原生命令。
+
+> 本项目是一个 Vibe Coding 项目，代码质量和工程完整性可能需要改进。如果你发现问题或有更好的实现建议，欢迎提交 [Issue](https://github.com/Coffeiz/dsh-qqchat/issues) 或 [Pull Request](https://github.com/Coffeiz/dsh-qqchat/pulls)。
+
+</div>
 
 ## 主要功能
 
@@ -134,6 +136,20 @@ QQ 中以 `/` 开头的消息会交给命令系统处理，不会作为普通消
 | `/plan` | 进入或退出 Plan 模式 |
 | `/feedback` | 提交反馈 |
 | `/permission` | 查看或切换工具权限预设 |
+
+### `/feedback` 反馈去向
+
+`/feedback` 使用 DSH 原生反馈机制，不会自动创建 GitHub Issue，也不会直接发送给 QQChat 作者。默认情况下，反馈只写入当前 DSH Session 的本地日志，不会离开本机。
+
+只有在 DSH 显式配置会话遥测时才会上传到配置的 OTLP 服务：
+
+| DSH 遥测模式 | 反馈去向 |
+| --- | --- |
+| `DISABLED`（默认） | 仅保存在本地 Session |
+| `FEEDBACK_ONLY` | 执行 `/feedback` 时，将当前 Session 日志后缀发送到配置的 OTLP 服务 |
+| `FULL` | Session 事件按配置实时发送到 OTLP 服务；`/feedback` 另外记录反馈事件 |
+
+反馈可能包含当前 Session 的对话、工具参数、工具结果和工作区路径。提交前请确认 DSH 遥测配置符合你的隐私要求。
 
 `/export` 是 DSH Web 的浏览器下载命令，QQ 中会提示暂不支持。模型切换按群聊/私聊分别生效，并保留已有对话上下文。
 
