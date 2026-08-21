@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { createRequire } from 'node:module'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { AgentHandle, AgentOptions, AgentSetup, ModelSelectionRef, PreStepDecision as AgentPreStepDecision } from '@deepseek-ai/dsh-agent'
@@ -41,6 +42,8 @@ interface Composition { presetId?: string; setup?: AgentSetup }
 interface ActiveActor { chatType: ChatType; senderId: string }
 
 const MEDIA_TOOL_NAMES = new Set(['qqchat_describe_image', 'qqchat_read_file', 'qqchat_media_info'])
+const packageMetadata = createRequire(import.meta.url)('../../package.json') as { version?: string }
+const PLUGIN_VERSION = packageMetadata.version || 'unknown'
 
 export class DshQQBridge {
   private readonly handles = new Map<string, AgentHandle>()
@@ -484,7 +487,7 @@ export class DshQQBridge {
         return { kind: 'success', text: '已中止当前生成。' }
       }),
       register('qqping', '测试 QQChat 连通性', () => ({ kind: 'success', text: 'pong 🏓' })),
-      register('qqversion', '查看 QQChat 版本', () => ({ kind: 'success', text: `dsh-qqchat v${this.config.source === 'dsh-qqchat' ? '0.1.0-alpha.1' : this.config.source}` })),
+      register('qqversion', '查看 QQChat 版本', () => ({ kind: 'success', text: `dsh-qqchat v${PLUGIN_VERSION}` })),
       register('qqstatus', '查看当前会话状态', invocation => this.statusCommand(invocation.agent as AgentHandle['agent'])),
     ]
     return () => { for (const dispose of disposers.reverse()) dispose() }
