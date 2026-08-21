@@ -4,3 +4,8 @@ node_modules/
 *.sqlite-wal
 .DS_Store
 coverage/
+.client-build/
+
+lib/
+
+local.md

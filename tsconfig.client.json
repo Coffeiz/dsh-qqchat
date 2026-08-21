@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "verbatimModuleSyntax": false,
+    "rootDir": "./client-src",
+    "outDir": "./.client-build",
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": ["client-src/**/*.cts"]
+}

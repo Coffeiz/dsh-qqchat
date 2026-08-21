@@ -1,16 +1,19 @@
 {
   "name": "dsh-qqchat",
-  "version": "0.1.0-alpha.1",
-  "description": "QQ private/group chat channel plugin for DeepSeek Harness, with QR bot binding, group memory and DSH-native UI.",
-  "private": true,
+  "version": "0.2.0",
+  "description": "DeepSeek Harness 的 QQ 私聊/群聊插件，支持扫码授权、原生 Session、群记忆与工具权限。",
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
   },
   "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
   "exports": {
-    ".": "./lib/index.js",
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
     "./client": "./lib/client.js",
     "./package.json": "./package.json"
   },
@@ -20,13 +23,23 @@
     "client-src",
     "cordis.patch.yml",
     "README.md",
-    "docs"
+    "README.en.md",
+    "docs",
+    "scripts",
+    "tsconfig.json",
+    "tsconfig.build.json",
+    "tsconfig.client.json"
   ],
   "scripts": {
-    "build:client": "node scripts/build-client.mjs",
-    "build": "npm run build:client",
-    "test": "node --test tests/*.test.js",
-    "check": "node --check src/index.js && node --check src/db.js && node --check src/qq-auth.js && node --check src/qq-api.js && node --check src/qq-gateway.js && node --check src/memory.js && node --check src/agent-bridge.js && node --check src/rpc.js && node --check client-src/plugin.cjs"
+    "clean": "node -e \"const fs=require('node:fs');fs.rmSync('lib',{recursive:true,force:true});fs.rmSync('.client-build',{recursive:true,force:true})\"",
+    "build:host": "tsc -p tsconfig.build.json",
+    "build:client": "tsc -p tsconfig.client.json && node scripts/wrap-client.mjs",
+    "build": "npm run clean && npm run build:host && npm run build:client",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "check": "npm run typecheck && npm test && npm run build",
+    "prepublishOnly": "npm run check",
+    "prepare": "npm run build"
   },
   "dependencies": {
     "qrcode": "^1.5.4"
@@ -34,14 +47,39 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-agent": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-commands": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-client-connection": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-client-ui-conversation": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-client-ui-settings": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-llm": "^0.1.0-rc.8",
-    "@deepseek-ai/dsh-session": "^0.1.0-rc.8"
+    "@deepseek-ai/dsh-session": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.8"
   },
   "peerDependenciesMeta": {
-    "@deepseek-ai/dsh-client-connection": { "optional": true },
-    "@deepseek-ai/dsh-client-ui-settings": { "optional": true }
+    "@deepseek-ai/dsh-client-connection": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-ui-settings": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-runtime": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-ui-conversation": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-agent-default-model": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-commands": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-client-connection": "^0.1.0-rc.8",
+    "@types/node": "^22.18.0",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^19.1.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
   },
   "dsh": {
     "bundle": {
@@ -51,6 +89,8 @@
       "platform": "web",
       "inject": [
         "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-conversation",
         "@deepseek-ai/dsh-client-ui-settings"
       ]
     }
@@ -58,5 +98,18 @@
   "repository": {
     "type": "git",
     "url": "git+ssh://git@github.com/Coffeiz/dsh-qqchat.git"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "qq",
+    "qqbot",
+    "chat",
+    "memory",
+    "cordis",
+    "plugin"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }

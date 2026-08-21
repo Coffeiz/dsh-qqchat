@@ -1,44 +1,232 @@
-# dsh-qqchat architecture
+# dsh-qqchat 架构
 
-## Design goals
+[English](./ARCHITECTURE.en.md)
 
-`dsh-qqchat` is an out-of-tree DSH plugin. It should not require a fork of DeepSeek Harness, a second web application, PostgreSQL, Redis, or Gugu services.
+## 核心边界
 
-The plugin owns QQ transport and IM-domain persistence; DSH owns Agent execution, model routing, tools and the canonical Session log for Agent-participating turns.
-
-## Host / Client split
+`dsh-qqchat` 是独立的 DSH out-of-tree 插件，不 fork DeepSeek Harness。
 
 ```text
-DSH Browser / Electron WebView
-        │
-        │ DSH Connection RPC (/qqchat, loopback)
-        ▼
-┌──────────────────────────────────────────────┐
-│ dsh-qqchat Host                              │
-│                                              │
-│ QQBindService      QQGateway + QQApiClient   │
-│       │                    │                 │
-│       └──────────┬─────────┘                 │
-│                  ▼                           │
-│           QQChatRuntime                      │
-│             │       │                        │
-│             │       ├────► SQLite            │
-│             │       │                        │
-│             ▼       ▼                        │
-│          DshQQBridge ───► MemoryEngine       │
-│             │                  │             │
-└─────────────┼──────────────────┼─────────────┘
-              ▼                  ▼
-          DSH Agent          ctx.llm.stream
+dsh-qqchat
+  QQ protocol / auth / identity
+  QQ real history
+  receive policy
+  group + member memory
+  tool authority
+  proactive sending
+  QQ-specific Client presentation
+
+DSH
+  Agent loop
+  Session lifecycle
+  model routing
+  tools
+  Session list
+  Conversation shell
 ```
 
-The client half contains only presentation and RPC calls. Credentials, QQ tokens and QR decryption keys never enter the browser module.
+QQ Chat 不维护第二套 AgentLoop，也不维护第二套聊天导航。
 
-## QQ ingress
+## Session 是主导航单位
 
-`QQGateway` receives official QQ dispatch events and `normalizeQQDispatch()` converts them to a small platform-neutral internal record.
+每个 QQ peer 映射一个正常 DSH Session：
 
-Group identity priority:
+```text
+group -> groups.dsh_session_id
+c2c   -> members.dsh_session_id
+
+sessionId = qqchat-<uuid>
+```
+
+标题通过 DSH `sessionTitle` 写入：
+
+```text
+QQ群 · <群名>
+QQ私聊 · <昵称>
+```
+
+Client 不再注册 `sidebar.footer.action` 会话选择器。QQ Session 直接由 DSH 自己的 Session/Workspace Browser 展示和打开。
+
+DSH 用 `turn/start` 判断一个 Session 是否仍为 blank。只有静默记录的新 QQ peer 没有正常 Agent turn，因此插件创建 Session 后提交一次 `qq-chat-bootstrap` wake，并在 `agent/pre-step` 立即 reject。结果是：
+
+- 有 durable turn boundary；
+- Session 能进入 DSH 正常列表；
+- 没有 model step；
+- 不调用 LLM；
+- 不发送 QQ 消息；
+- bootstrap 不进入模型 history。
+
+## Settings 边界
+
+`settings.section: qqchat` 只放控制面：
+
+```text
+扫码 / 连接状态
+自动回应 / @回复 / 静默记录
+群聊消息兼容格式
+私聊消息兼容格式
+群成员可用工具
+Owner stable ID
+查看日志
+```
+
+Settings 不包含群列表、私聊列表、聊天记录或记忆主界面。
+
+## Conversation 边界
+
+QQ Session 使用 DSH 主 Conversation。
+
+```text
+conversation.chat.node
+  qqchat-message      # 仅静默/未触发 Agent 的 QQ transcript
+
+conversation.composer
+  QQ Session composer # 主动发 QQ，不触发本地 Agent
+
+conversation.session.header.utilities
+  QQ 记忆
+```
+
+### 触发 Agent 的 QQ 消息
+
+接收策略决定需要回复时，消息直接走 DSH 原生 `user/message`：
+
+```text
+QQ inbound
+  -> SQLite
+  -> context snapshot
+  -> Agent.followup()
+  -> user/message
+  -> DSH Agent loop
+  -> assistant/tool events
+  -> QQ API
+```
+
+Source 的 `kind` 保持 `user`，同时附带 QQ metadata：
+
+```text
+channel=qq
+botId
+chatType
+chatId
+senderId
+senderName
+messageId
+mentioned
+```
+
+因此 DSH Conversation 把它当普通 user turn；插件不再为同一条消息额外 append `qqchat/message`，避免双份显示。
+
+### 不触发 Agent 的 QQ 消息
+
+`@回复` 下未 @Bot 的消息、以及 `静默记录` 下的群消息：
+
+```text
+session.append('qqchat/message', ...)
+```
+
+`qqchat/message` 是 log-only 自定义 Session event：
+
+- Client 可渲染 QQ 群友气泡；
+- 不属于 DSH model surface；
+- 不会唤醒 Agent；
+- 不会调用 LLM。
+
+插件不再从 SQLite 重放整段历史到 DSH Session。DSH Session 保存它实际经历过的 display/Agent events，完整 QQ 世界历史始终由 SQLite 负责。
+
+## Host / Client
+
+```text
+DSH Web Client
+      │
+      │ Connection RPC /qqchat
+      ▼
+┌──────────────────────────────────────┐
+│ dsh-qqchat Host                      │
+│                                      │
+│ QQBindService                        │
+│ QQGateway ── QQApiClient             │
+│      │                               │
+│      ▼                               │
+│ QQChatRuntime                        │
+│   │       │                          │
+│   │       ├── QQChatDatabase         │
+│   │       ├── MemoryEngine           │
+│   │       └── QQChatLogger           │
+│   ▼                                  │
+│ DshQQBridge                          │
+└───┬──────────────────────────────────┘
+    ▼
+ DSH Agent / Session / Tools
+```
+
+QQ credential、Token、扫码 AES 临时 key 都只存在 Host。
+
+## 三个数据面
+
+### 1. QQ 真实数据面
+
+SQLite 是 QQ 世界事实来源：
+
+```text
+accounts
+groups
+members
+group_members
+messages
+memory_documents
+reflection_state
+plugin_settings
+outbox
+```
+
+### 2. DSH Session / UI 数据面
+
+记录：
+
+- Agent 真正参与的 turn；
+- assistant/tool events；
+- 不唤醒 Agent 的 log-only QQ transcript；
+- Session title 和 turn boundary。
+
+### 3. Model surface
+
+模型只看到 DSH 正常 surface 以及插件明确注入的 context snapshot。QQChat 的
+记忆快照使用 DSH 官方 `@deepseek-ai/dsh-system-prompt` runtime-context 来源，
+由 DSH 的 projection 机制替换旧快照，避免每轮重复追加完整记忆消息。
+
+完整群聊不会因为存在 SQLite 或 QQ UI transcript 就自动进入模型 history。
+
+## 入站状态机
+
+```text
+QQ dispatch
+   ↓
+normalize stable identity
+   ↓
+upsert member/group
+   ↓
+insert SQLite message
+   ↓
+receive mode
+   ├─ silent
+   │    └─ qqchat/message -> stop
+   │
+   ├─ mention + not @
+   │    └─ qqchat/message -> stop
+   │
+   └─ auto / mentioned / c2c
+        ├─ assemble memory/context
+        ├─ Agent.followup(user message)
+        ├─ DSH tools/model loop
+        └─ QQ outbound
+```
+
+三种模式都会留下真实 QQ 历史并参与记忆活动；区别只是是否进入 Agent turn。
+
+## Identity
+
+稳定身份优先级：
 
 ```text
 author.user_openid
@@ -46,43 +234,61 @@ author.user_openid
   || author.id
 ```
 
-`senderName` is never a key.
+原则：
 
-The runtime then:
+```text
+senderId   -> 身份 / 权限 / 记忆主键
+senderName -> 仅展示
+```
 
-1. resolves/upserts the account member;
-2. resolves/upserts the group and group-member relation;
-3. applies `enabled / requiresAt / readEnabled`;
-4. persists the accepted message;
-5. schedules memory reflection;
-6. only when a reply is required, forwards the turn to `DshQQBridge`.
+不根据昵称推断身份。
 
-This is intentionally different from forwarding all visible group traffic into the DSH Agent queue.
+## Agent context
 
-## DSH session mapping
+群聊每次 Agent turn 前从 SQLite 重新装配：
 
-- Group chat → `groups.dsh_session_id`
-- QQ C2C peer → `members.dsh_session_id`
+```text
+recent group history
++ group profile
++ group summary
++ group memory
++ group daily
++ current member profile
++ current member pattern
++ current member summary
++ stable sender/group metadata
+```
 
-A group therefore has one durable Agent conversation identity, but silent group traffic remains in `messages`, not in the DSH Session log.
+当前 QQ 消息本身以正常 user prompt 进入 turn；可靠身份信息则由 source metadata 和 context snapshot 提供。私聊快照包含 member 的 profile、pattern、summary、daily 和 memory；群聊快照包含群级文档、当前成员文档和近期群聊记录。
 
-Before a reply turn, `DshQQBridge` injects one synthetic model-facing context message with:
+## 工具权限
 
-- group memory;
-- current member memory;
-- recent group history with reliable sender IDs.
+使用 DSH 官方：
 
-It then follows up with the current QQ user message. The Agent's response is collected from `session/event` `assistant/message` events.
+```text
+tools/pre-execute
+```
 
-The latest real `request/header` provider/model route is captured for memory reflection so auxiliary memory calls follow the group's actual DSH route instead of introducing a second model configuration source.
+当前 QQ Agent turn 临时记录：
 
-## Memory scopes
+```text
+sessionId -> { chatType, senderId }
+```
+
+规则：
+
+```text
+非 QQ group turn                    -> next()
+groupMembersCanUseTools == true    -> next()
+senderId == ownerUserId            -> next()
+其他                                -> deny
+```
+
+不修改 Tool Runtime 或 AgentLoop。
+
+## Memory scope
 
 ### Group
-
-Primary key: SQLite group row id, itself unique on `(account_id, platform_group_id)`.
-
-Documents:
 
 ```text
 profile
@@ -93,86 +299,113 @@ memory
 
 ### Member
 
-Primary key: SQLite member row id, itself unique on `(account_id, platform_user_id)`.
-
-Documents:
-
 ```text
 profile
 pattern
 summary
 ```
 
-The split preserves the key Gugu invariant: cross-group personal identity can be stable under the same bot, while group-specific relationships/decisions cannot leak to another group.
+Group scope 不跨群；同一 Bot 下的 Member scope 可以跨群连续。
 
-## Reflection
+反思以 idle debounce / batch threshold 触发，并使用 stable sender ID 做归属。
 
-`reflection_state.last_message_id` is the durable cursor. The engine reads at most `reflectionMaxMessages` newer messages.
+## 记忆 UI
 
-Triggers:
+QQ Session 顶部 `QQ 记忆`：
 
-- debounce idle trigger (`reflectionIdleMs`), or
-- immediate trigger when `reflectionBatchSize` is reached.
-
-The LLM receives JSON containing existing docs + reliable-ID transcript and must return strict JSON. Unknown member IDs are discarded rather than guessed from display names.
-
-## Client UI
-
-The package declares `dsh.client` and exports `./client`. `lib/client.js` is a DSH lazy-CJS factory loaded by the existing DSH client module system.
-
-It registers into the standard `settings.section` slot:
+群聊：
 
 ```text
-id    = qqchat
-order = 35
-label = QQ Chat
+group profile / summary / memory / daily
+member list
+  -> 点击成员
+     -> member profile / pattern / summary / memory
 ```
 
-No DSH source patch is needed.
-
-The UI deliberately relies on the DSH CSS variable vocabulary (`--dsw-*`) and the platform-provided React module. The only hardcoded white surface is the QR image backing needed for scanner contrast.
-
-## RPC boundary
-
-Host registers:
+私聊：
 
 ```text
-ctx.connection.rpc.handle('/qqchat', handler, { authority: 'loopback' })
+member profile / pattern / summary
 ```
 
-Endpoints:
+私聊 `daily` 和 `memory` 仍属于 member scope 的持久化文档，参与反思和压缩，但当前 UI 尚未单独展示。
+
+## 主动发送
+
+QQ Session composer 调用：
+
+```text
+chat/send
+```
+
+Host：
+
+```text
+group -> /v2/groups/.../messages
+c2c   -> /v2/users/.../messages
+```
+
+主动发送直接进 QQ，不再作为本地 Agent prompt。
+
+`outbox` 独立于 Session live 生命周期，留给定时/主动任务。
+
+## RPC
+
+Host 注册 loopback RPC：
+
+```text
+/qqchat
+```
+
+主要 endpoints：
 
 ```text
 status
 auth/start
 auth/poll
-account/reconnect
-account/disconnect
-groups/list
-group/get
-group/messages
-group/update
-group/send
-group/reflect
+settings/get
+settings/update
+logs/list
+chat/send
+chat/info
 ```
 
-The custom channel keeps UI-specific data separate from the DSH core API vocabulary and inherits DSH's existing browser/host trust fencing.
+旧的 `chats/list` / `chat/ensure` / `group/*` 仍可作为兼容 API，但当前主导航不再依赖它们。
 
-## Proactive sends
-
-`group/send` performs an immediate active group send. The SQLite `outbox` is also present for scheduler/automation integration without depending on DSH's current session-local reminder delivery semantics.
-
-Future scheduled-message support should enqueue to this outbox rather than require a live DSH Session at the due time.
-
-## SQLite ownership
-
-`qqchat.sqlite` is plugin-owned state. DSH Session persistence remains a separate subsystem.
-
-This boundary is deliberate:
+## SQLite 与 DSH persistence 的关系
 
 ```text
-QQ reality / history / identity / memory  -> qqchat.sqlite
-Agent-visible turns / tool calls / output -> DSH Session
+qqchat.sqlite
+  QQ 真实历史 / identity / memory / settings / outbox
+
+DSH Session persistence
+  Agent turns / model output / tools / DSH transcript
 ```
 
-It avoids turning every ambient group message into model conversation history.
+二者互不替代。
+
+## TypeScript 构建
+
+```text
+src/
+  index.ts / config.ts / types.ts
+  commands/     DSH 原生命令的 QQ 分发适配
+  gateway/       QQ API、授权、Gateway、消息解析
+  session/       Agent bridge、Session runtime
+  transport/     DSH RPC
+  storage/       SQLite、记忆
+  shared/        日志、DSH 类型扩展
+client-src/*.cts
+tests/*.test.ts
+```
+
+Host 使用 `tsc`；Client 编译到临时 CJS 后由 `scripts/wrap-client.mjs` 包装成 DSH Client factory。
+
+`lib/` 是生成物，不作为源码真相。
+
+## 开发与安全文档
+
+- [开发与验证](DEVELOPMENT.md)：安装、构建、测试、启动和浏览器验证。
+- [记忆系统](MEMORY.md)：scope、daily、反思和压缩契约。
+- [安全与数据边界](SECURITY.md)：凭据、身份、权限、日志和隔离。
+- [开发日志](devlog.md)：具体排查和设计决策。
