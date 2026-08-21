@@ -16,7 +16,7 @@ import '../shared/augmentations.js'
 import { defaultRuntimeSettings } from '../config.js'
 import { registerQQImageTool } from '../media/image-tool.js'
 import { registerQQMediaTools } from '../media/media-tools.js'
-import { dispatchQQCommand, qqCommandText } from '../commands/dispatch.js'
+import { dispatchQQCommand, qqCommandText, slashCommandName } from '../commands/dispatch.js'
 import type { QQChatDatabase } from '../storage/db.js'
 import type { MemoryEngine } from '../storage/memory.js'
 import type {
@@ -149,6 +149,16 @@ export class DshQQBridge {
         const commandText = qqCommandText(message.text, message.mentioned)
         if (commandText !== undefined) {
           if (!commands) return '当前 DSH profile 未加载命令系统，请重启并确认使用了最新插件。'
+          // Preset discovery/selection is a pre-session operation. Running it
+          // through DSH's native command executor would append command/run and
+          // make the blank Session ineligible for the very preset it lists.
+          // Keep the native registration for Web, but handle QQ directly.
+          if (slashCommandName(commandText) === 'qqpreset' && (message.chatType !== 'group' || isOwner)) {
+            const prefix = '/qqpreset'
+            const result = await this.presetCommand(agent, commandText.slice(prefix.length).trim())
+            if (this.pendingResets.delete(String(sessionId))) await this.resetSession(message.chatType, row)
+            return result.text || ''
+          }
           const command = await dispatchQQCommand(commands, agent, commandText, { chatType: message.chatType, isOwner })
           if (command.handled) {
             if (this.pendingResets.delete(String(sessionId))) await this.resetSession(message.chatType, row)
@@ -330,7 +340,7 @@ export class DshQQBridge {
 
   private appendDisplayIfMissing(session: Session, event: QQChatDisplayEvent): void {
     if (session.events.some(item => item.type === 'qqchat/message' && item.data.messageId === event.messageId)) return
-    session.append('qqchat/message', displayEventPayload(event))
+    session.append('qqchat/message', displayEventPayload(event), { ignorable: true })
   }
 
   private appendOwnerMessageIfMissing(session: Session, event: QQChatDisplayEvent): void {
@@ -468,7 +478,7 @@ export class DshQQBridge {
       register('qqreset', '开始新会话（/qqnew 别名）', invocation => { this.requestReset(String(invocation.agent.id)); return { kind: 'success', text: '已开启新会话，下一条消息将进入新的 Session。' } }),
       register('qqclear', '开始新会话（/qqnew 别名）', invocation => { this.requestReset(String(invocation.agent.id)); return { kind: 'success', text: '已开启新会话，下一条消息将进入新的 Session。' } }),
       register('qqmodel', '查看或切换当前会话模型', invocation => this.modelCommand(invocation), '[provider/]model'),
-      register('qqpreset', '查看或切换当前 Session 的 Agent Preset', invocation => this.presetCommand(invocation), 'preset'),
+      register('qqpreset', '查看或切换当前 Session 的 Agent Preset', invocation => this.presetCommand(invocation.agent as AgentHandle['agent'], invocation.rawInput.trim()), 'preset'),
       register('qqstop', '中止当前生成', invocation => {
         if (invocation.agent.status !== 'running') return { kind: 'success', text: '当前没有进行中的生成。' }
         invocation.agent.cancel({ kind: 'user' })
@@ -511,12 +521,10 @@ export class DshQQBridge {
     return { kind: 'success', text: `模型已切换：${provider}/${model}\n对话上下文保留，下一轮生效。` }
   }
 
-  private async presetCommand(invocation: CommandInvocation): Promise<CommandResult> {
+  private async presetCommand(agent: AgentHandle['agent'], requested: string): Promise<CommandResult> {
     const getService = (this.ctx as unknown as { get?: (name: string) => unknown }).get
     const presets = getService?.call(this.ctx, 'agentPresets') as AgentPresetService | undefined
     if (!presets) return { kind: 'error', text: '当前 DSH profile 未加载 Agent Preset 系统。' }
-    const agent = invocation.agent as AgentHandle['agent']
-    const requested = invocation.rawInput.trim()
     if (!requested) {
       const available = await presets.list()
       return { kind: 'success', text: available.length ? `可用 Agent Preset：\n${available.map(preset => `/qqpreset ${preset.id}`).join('\n')}` : '当前没有可用 Agent Preset。' }
@@ -528,8 +536,12 @@ export class DshQQBridge {
       const preset = await presets.recompose(agent.ctx, requested)
       agent.session.append('agent-preset/selected', { agentPreset: preset.id })
       return { kind: 'success', text: `当前 Session 已切换到 Agent Preset：${preset.id}` }
-    } catch (error) {
-      return { kind: 'error', text: `无法切换 Agent Preset：${error instanceof Error ? error.message : String(error)}` }
+    } catch {
+      const available = await presets.list().catch(() => [])
+      const availableText = available.length
+        ? `当前可用：${available.map(preset => preset.id).join('、')}`
+        : '当前没有可用 Agent Preset。'
+      return { kind: 'error', text: `无法切换 Agent Preset「${requested}」：该 preset 不存在、已删除或格式无效。\n${availableText}` }
     }
   }
 
@@ -548,7 +560,17 @@ export class DshQQBridge {
     const presets = getService?.call(this.ctx, 'agentPresets') as AgentPresetService | undefined
     if (!presets) return {}
     const persisted = sessionId ? await this.persistedPreset(sessionId) : undefined
-    const preset = await presets.resolve(persisted || this.config.agentPreset)
+    const requested = persisted || this.config.agentPreset
+    let preset: AgentPreset
+    try {
+      preset = await presets.resolve(requested)
+    } catch (error) {
+      const available = await presets.list()
+      const fallback = available[0]
+      if (!fallback) throw error
+      this.logger.warn?.(`[dsh-qqchat] Agent Preset「${requested || '默认'}」不可用，已降级到「${fallback.id}」`)
+      preset = await presets.resolve(fallback.id)
+    }
     return { presetId: preset.id, setup: async agentCtx => { await presets.mount(agentCtx, preset.id) } }
   }
 

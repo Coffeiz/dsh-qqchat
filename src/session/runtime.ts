@@ -147,6 +147,9 @@ export class QQChatRuntime {
     if (!account) return
     const id = Number(account.id)
     if (this.gateways.has(id)) return
+    // QR binding can replace the secret for an existing account id. Never
+    // carry a token obtained with the previous secret into the new Gateway.
+    this.api.clearToken(id)
     const gateway = new QQGateway(account, this.db, this.api, message => this.onIncoming(message), this.logger)
     this.gateways.set(id, gateway)
     gateway.start()

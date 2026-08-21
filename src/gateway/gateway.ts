@@ -71,7 +71,11 @@ export class QQGateway {
   }
 
   private async connectOnce(): Promise<void> {
-    const [url, token] = await Promise.all([this.api.gatewayUrl(this.account), this.api.token(this.account)])
+    // Resolve the URL first. gatewayUrl may invalidate and refresh a stale
+    // cached token after a 401; fetching the identify token in parallel could
+    // otherwise retain the pre-refresh token for the WebSocket handshake.
+    const url = await this.api.gatewayUrl(this.account)
+    const token = await this.api.token(this.account)
     await new Promise<void>((resolve, reject) => {
       const ws = new WebSocket(url)
       this.ws = ws

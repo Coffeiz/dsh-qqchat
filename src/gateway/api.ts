@@ -75,12 +75,16 @@ export class QQApiClient {
     return data.access_token
   }
 
-  async gatewayUrl(account: AccountRow): Promise<string> {
+  async gatewayUrl(account: AccountRow, retry = true): Promise<string> {
     const token = await this.token(account)
     const base = account.sandbox ? SANDBOX_API_BASE : API_BASE
     const response = await fetch(`${base}/gateway`, {
       headers: { Authorization: `QQBot ${token}` }, signal: AbortSignal.timeout(15_000),
     })
+    if (response.status === 401 && retry) {
+      this.clearToken(account.id)
+      return this.gatewayUrl(account, false)
+    }
     const data = await safeJson<QQGatewayPayload>(response)
     if (!response.ok || !data?.url) throw new Error(`QQ gateway 获取失败: HTTP ${response.status}`)
     return data.url
