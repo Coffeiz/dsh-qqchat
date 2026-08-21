@@ -16,7 +16,7 @@
   <a href="./docs/ARCHITECTURE.md">架构说明</a>
 </p>
 
-<p><em>dsh-qqchat` 是 DeepSeek Harness（DSH）的 QQ 官方 Bot 插件，支持 QQ 群聊、私聊、会话隔离、记忆系统和 DSH 原生命令。</em></p>
+<p><em>`dsh-qqchat` 是 DeepSeek Harness（DSH）的 QQ 官方 Bot 插件，支持 QQ 群聊、私聊、会话隔离、记忆系统和 DSH 原生命令。</em></p>
 
 > 本项目是一个 Vibe Coding 项目，代码质量和工程完整性可能需要改进。如果你发现问题或有更好的实现建议，欢迎提交 [Issue](https://github.com/Coffeiz/dsh-qqchat/issues) 或 [Pull Request](https://github.com/Coffeiz/dsh-qqchat/pulls)。
 
