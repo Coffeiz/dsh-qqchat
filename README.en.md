@@ -31,13 +31,13 @@
 | QR connection | Binds an official QQ Bot from **Settings -> QQ Chat** | Cancel the binding and scan again when needed |
 | Group receive modes | Auto reply, Mention only or Silent record | Silent record stores messages without waking the Agent |
 | Message formats | Smart, Markdown or Plain compatibility | Group and direct-chat formats are configured separately; groups default to Plain compatibility |
-| Direct-chat streaming | Optionally uses QQ's official streaming message API | Can be disabled in Settings; failed streams fall back automatically |
+| Direct-chat streaming | Optionally uses QQ's official streaming message API for private chats | Private chats only; Plain compatibility disables it automatically; some clients may not display streaming |
 | Quotes and mentions | Preserves quoted messages and resolves QQ mentions to display names | Stable IDs remain in metadata |
 | Memory system | Stores group, member and direct-user memory | Can be disabled; disabling does not delete existing memory |
 | Memory reflection | Converts recent daily notes into long-term memory | Runs asynchronously after idle or batch thresholds |
 | Media and file permissions | Separately controls receiving media, reading attachments, and regular tools | Owner and direct chats are unrestricted by default |
 | Tool permissions | Separately controls whether group members may use regular Agent tools | Owner is matched by stable user ID |
-| Native DSH commands | Runs `/compact`, `/goal`, `/model`, `/status` and more directly from QQ | Commands do not go through the model; `/help` lists the full set |
+| Native DSH commands | Runs `/compact`, `/goal`, `/plan`, `/qqmodel`, `/qqstatus` and more directly from QQ | Commands do not go through the model; `/qqhelp` lists the full set |
 | Native DSH UI | Uses the normal Session list, Conversation surface and composer styling | QQ Sessions remain ungrouped in DSH |
 | Diagnostics | Shows plugin logs in Settings | Useful for connection and delivery troubleshooting |
 
@@ -136,7 +136,7 @@ Configure **Settings -> QQ Chat -> Message reception**:
 | Mention only | All messages are stored, but only messages mentioning the Bot trigger a reply |
 | Silent record | Stores messages and memory without actively replying |
 
-Groups default to Plain compatibility format. Group and direct-chat formats can be selected independently.
+Groups default to Plain compatibility format. Group and direct-chat formats can be selected independently. Plain compatibility for direct chats automatically disables streaming.
 
 ## Commands
 
