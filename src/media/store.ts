@@ -59,7 +59,7 @@ export class QQMediaStore {
   }
 
   async cleanup(): Promise<void> {
-    const cutoff = Date.now() - RETENTION_MS
+    const cutoff = Date.now()
     this.db.expireAttachments(cutoff)
     for (const path of this.db.expiredAttachmentPaths(cutoff)) {
       try {

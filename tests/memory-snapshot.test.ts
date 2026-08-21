@@ -18,7 +18,7 @@ test('memory snapshot refreshes after TTL, content changes, or compact', () => {
 
 test('restored snapshot becomes stale when compaction ended after it', () => {
   const state = restoreMemorySnapshotState([
-    { type: 'user/message', time: 100, source: { kind: 'plugin', plugin: 'runtime' }, content: [{ type: 'text', text: 'snapshot' }] },
+    { type: 'user/message', time: 100, data: { source: { kind: 'plugin', plugin: 'runtime' }, content: [{ type: 'text', text: 'snapshot' }] } },
     { type: 'compaction/end', time: 200 },
   ], 'runtime')
   assert.equal(state?.stale, true)

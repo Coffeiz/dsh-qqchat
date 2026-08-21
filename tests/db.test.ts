@@ -144,11 +144,13 @@ test('attachment reads are limited to the DSH session that owns the message', ()
   const attachmentId = 'qqatt-scoped'
   db.saveAttachment({ id: attachmentId, accountId: Number(account.id), sourceMessageId: 'scoped-message', kind: 'image', filename: 'scoped.png', contentType: 'image/png', sizeBytes: 12, localPath: '/private/media/scoped.png' })
   db.setChatSession('group', Number(group.id), 'session-group-owned')
+  db.setChatSession('c2c', Number(member.id), 'session-member-private')
   db.insertMessage({
     accountId: Number(account.id), platformMessageId: 'scoped-message', chatType: 'group', groupId: Number(group.id), memberId: Number(member.id),
     direction: 'inbound', content: '图片',
     attachments: [{ id: attachmentId, kind: 'image', filename: 'scoped.png', contentType: 'image/png', sizeBytes: 12, quoted: false }],
   })
   assert.equal(db.attachmentForSession('session-group-owned', attachmentId)?.id, attachmentId)
+  assert.equal(db.attachmentForSession('session-member-private', attachmentId), undefined)
   assert.equal(db.attachmentForSession('session-other', attachmentId), undefined)
 }))

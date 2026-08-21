@@ -28,6 +28,7 @@ export class QQGateway {
   private ackTimer?: ReturnType<typeof setTimeout>
   private lastAckAt = 0
   private loopPromise?: Promise<void>
+  private readonly dispatchChains = new Map<string, Promise<void>>()
 
   constructor(
     readonly account: AccountRow,
@@ -148,7 +149,17 @@ export class QQGateway {
       return
     }
     const message = normalizeQQDispatch(type, data as QQDispatchData, Number(this.account.id))
-    if (message) await this.onMessage(message)
+    if (message) await this.enqueueMessage(message)
+  }
+
+  private enqueueMessage(message: QQNormalizedMessage): Promise<void> {
+    const key = `${this.account.id}:${message.chatType}:${message.chatId}`
+    const previous = this.dispatchChains.get(key) || Promise.resolve()
+    const current = previous.catch(() => undefined).then(() => this.onMessage(message))
+    this.dispatchChains.set(key, current)
+    return current.finally(() => {
+      if (this.dispatchChains.get(key) === current) this.dispatchChains.delete(key)
+    })
   }
 
   private installHeartbeat(ws: WebSocket, interval: number): void {

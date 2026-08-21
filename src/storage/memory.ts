@@ -40,6 +40,8 @@ export class MemoryEngine {
   private readonly memberTimers = new Map<number, ReturnType<typeof setTimeout>>()
   private readonly routes = new Map<number, ModelRoute>()
   private readonly memberRoutes = new Map<number, ModelRoute>()
+  private readonly reflectingGroups = new Map<number, Promise<MemoryView>>()
+  private readonly reflectingMembers = new Map<number, Promise<MemoryDocuments>>()
 
   constructor(
     private readonly ctx: Context,
@@ -53,6 +55,8 @@ export class MemoryEngine {
     for (const timer of this.memberTimers.values()) clearTimeout(timer)
     this.timers.clear()
     this.memberTimers.clear()
+    this.reflectingGroups.clear()
+    this.reflectingMembers.clear()
   }
 
   setRoute(groupId: number, provider: string, model: string, sessionId: string): void {
@@ -100,6 +104,17 @@ export class MemoryEngine {
   }
 
   async reflectNow(groupId: number): Promise<MemoryView> {
+    groupId = Number(groupId)
+    const existing = this.reflectingGroups.get(groupId)
+    if (existing) return existing
+    const current = this.reflectNowInternal(groupId)
+    this.reflectingGroups.set(groupId, current)
+    return current.finally(() => {
+      if (this.reflectingGroups.get(groupId) === current) this.reflectingGroups.delete(groupId)
+    })
+  }
+
+  private async reflectNowInternal(groupId: number): Promise<MemoryView> {
     groupId = Number(groupId)
     const route = this.routes.get(groupId)
     if (!route) throw new Error('这个群还没有可复用的 DSH 模型路由；先让 Agent 在群里完成一次回复')
@@ -151,6 +166,17 @@ export class MemoryEngine {
   }
 
   async reflectMemberNow(memberId: number): Promise<MemoryDocuments> {
+    memberId = Number(memberId)
+    const existing = this.reflectingMembers.get(memberId)
+    if (existing) return existing
+    const current = this.reflectMemberNowInternal(memberId)
+    this.reflectingMembers.set(memberId, current)
+    return current.finally(() => {
+      if (this.reflectingMembers.get(memberId) === current) this.reflectingMembers.delete(memberId)
+    })
+  }
+
+  private async reflectMemberNowInternal(memberId: number): Promise<MemoryDocuments> {
     memberId = Number(memberId)
     const route = this.memberRoutes.get(memberId)
     if (!route) throw new Error('这个私聊还没有可复用的 DSH 模型路由；先让 Agent 完成一次回复')

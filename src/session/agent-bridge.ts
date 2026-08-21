@@ -137,7 +137,7 @@ export class DshQQBridge {
     return sessionId
   }
 
-  async reply(message: QQNormalizedMessage, group: GroupRow | undefined, member: MemberRow, attachments: StoredAttachmentSummary[] = [], onTextDelta?: (delta: string) => void): Promise<string> {
+  async reply(message: QQNormalizedMessage, group: GroupRow | undefined, member: MemberRow, attachments: StoredAttachmentSummary[] = [], onTextDelta?: (delta: string) => void, isOwner = message.chatType === 'c2c'): Promise<string> {
     if (message.chatType === 'group' && !group) throw new Error('群消息缺少群上下文')
     const key = message.chatType === 'group' ? `g:${group!.id}` : `u:${member.id}`
     return this.serial(key, async () => {
@@ -149,7 +149,7 @@ export class DshQQBridge {
         const commandText = qqCommandText(message.text, message.mentioned)
         if (commandText !== undefined) {
           if (!commands) return '当前 DSH profile 未加载命令系统，请重启并确认使用了最新插件。'
-          const command = await dispatchQQCommand(commands, agent, commandText)
+          const command = await dispatchQQCommand(commands, agent, commandText, { chatType: message.chatType, isOwner })
           if (command.handled) {
             if (this.pendingResets.delete(String(sessionId))) await this.resetSession(message.chatType, row)
             return command.text || ''
@@ -467,10 +467,6 @@ export class DshQQBridge {
     ].join('\n')
   }
 
-  private commandResult(handler: (invocation: CommandInvocation) => CommandResult | Promise<CommandResult>): CommandResult {
-    return handler as unknown as CommandResult
-  }
-
   private registerCommands(): () => void {
     const register = (name: string, description: string, handler: (invocation: CommandInvocation) => CommandResult | Promise<CommandResult>, input?: string): (() => void) =>
       this.ctx.commands.register({ name, description, ...(input ? { input: { hint: input } } : {}), handler })
@@ -547,13 +543,6 @@ export class DshQQBridge {
     this.locks.set(key, current)
     return current.finally(() => { if (this.locks.get(key) === current) this.locks.delete(key) })
   }
-}
-
-function visiblePromptText(message: QQNormalizedMessage): string {
-  const body = message.quotedText ? `> ${message.quotedText}\n\n${message.text || '(空消息)'}` : message.text || '(空消息)'
-  if (message.chatType !== 'group') return body
-  const speaker = message.senderName || shortId(message.senderId)
-  return `${speaker} · ${shortId(message.senderId)}\n${body}`
 }
 
 function mediaPrompt(attachments: StoredAttachmentSummary[]): string {

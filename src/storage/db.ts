@@ -572,7 +572,11 @@ export class QQChatDatabase {
       LEFT JOIN groups g ON g.id=msg.group_id
       LEFT JOIN members mem ON mem.id=msg.member_id
       WHERE a.id=? AND a.status IN ('staged','attached') AND (a.expires_at IS NULL OR a.expires_at>?)
-        AND (g.dsh_session_id=? OR mem.dsh_session_id=?)
+        AND (
+          (msg.chat_type='group' AND g.dsh_session_id=?)
+          OR
+          (msg.chat_type='c2c' AND mem.dsh_session_id=?)
+        )
       LIMIT 1
     `).get(attachmentId, Date.now(), sessionId, sessionId))
     if (!row) return undefined

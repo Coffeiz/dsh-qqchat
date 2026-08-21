@@ -6,6 +6,15 @@ export interface QQCommandReply {
   text?: string
 }
 
+export interface QQCommandScope {
+  chatType: 'group' | 'c2c'
+  isOwner: boolean
+}
+
+const READ_ONLY_GROUP_COMMANDS = new Set([
+  'help', 'qqhelp', 'qqcommands', 'qqping', 'qqversion', 'qqstatus',
+])
+
 /** Normalize a QQ command that may be prefixed by the bot mention. */
 export function qqCommandText(text: string, mentioned: boolean): string | undefined {
   const input = text.trim()
@@ -34,11 +43,18 @@ export async function dispatchQQCommand(
   commands: CommandRuntime,
   agent: Agent,
   input: string,
+  scope: QQCommandScope = { chatType: 'c2c', isOwner: true },
 ): Promise<QQCommandReply> {
   if (!input.startsWith('/')) return { handled: false }
 
   const name = slashCommandName(input)
   if (name === undefined) return { handled: true, text: '命令格式无效。发送 /help 查看可用命令。' }
+
+  // Native commands bypass the tools/pre-execute seam. Keep group control
+  // commands owner-only so they cannot change or stop a shared group Session.
+  if (scope.chatType === 'group' && !scope.isOwner && !READ_ONLY_GROUP_COMMANDS.has(name)) {
+    return { handled: true, text: '普通群成员只能使用查询类命令。' }
+  }
 
   // QQ has no browser download channel for the Web-only command.
   if (name === 'export' && commands.find(agent, name) !== undefined) {

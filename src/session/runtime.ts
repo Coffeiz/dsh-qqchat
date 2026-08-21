@@ -170,7 +170,8 @@ export class QQChatRuntime {
       const mode = settings.groupReceiveMode
       group = this.db.upsertGroup(message.accountId, message.groupOpenid, { enabled: true, requiresAt: mode === 'mention', readEnabled: true })
       this.db.touchGroupMember(Number(group.id), Number(member.id), message.senderName)
-      shouldReply = mode === 'auto' || (mode === 'mention' && message.mentioned)
+      if (group.enabled !== 1 || group.read_enabled !== 1) return
+      shouldReply = mode !== 'silent' && (group.requires_at === 0 || message.mentioned)
     }
     message.text = renderQQMentionNames(message.text, message.raw, id => {
       const mentionedMember = this.db.memberByPlatform(message.accountId, id)
@@ -212,7 +213,6 @@ export class QQChatRuntime {
 
     if (!shouldReply) {
       await this.bridge.recordTranscript(displayEvent, row, true)
-      if (settings.memoryEnabled && group) this.memory.schedule(Number(group.id))
       return
     }
 
@@ -228,7 +228,7 @@ export class QQChatRuntime {
       const stream = message.chatType === 'c2c' && settings.directReplyFormat !== 'compat' && settings.directStreamingEnabled
         ? this.api.createPrivateTextStream(account, targetId, sendOptions)
         : undefined
-      const reply = await this.bridge.reply(message, group, member, storedAttachments, stream ? delta => stream.push(delta) : undefined)
+      const reply = await this.bridge.reply(message, group, member, storedAttachments, stream ? delta => stream.push(delta) : undefined, isOwner)
       if (stream) {
         try {
           await stream.finish(reply)

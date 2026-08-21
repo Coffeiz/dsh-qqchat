@@ -45,3 +45,20 @@ test('QQ dispatch reports unknown commands instead of forwarding them', async ()
   assert.match(result.text || '', /未知或格式无效的命令/u)
   assert.match(result.text || '', /\/compact/u)
 })
+
+test('group members cannot execute QQ control commands', async () => {
+  let executed = false
+  const commands = runtime(async () => {
+    executed = true
+    return { commandId: 'command-1' as never, result: { kind: 'success', text: 'changed' } }
+  })
+  const result = await dispatchQQCommand(commands, agent, '/compact', { chatType: 'group', isOwner: false })
+  assert.deepEqual(result, { handled: true, text: '普通群成员只能使用查询类命令。' })
+  assert.equal(executed, false)
+})
+
+test('group members may use read-only QQ commands', async () => {
+  const commands = runtime(async () => ({ commandId: 'command-1' as never, result: { kind: 'success', text: 'ok' } }))
+  const result = await dispatchQQCommand(commands, agent, '/help', { chatType: 'group', isOwner: false })
+  assert.deepEqual(result, { handled: true, text: 'ok' })
+})
