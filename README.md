@@ -41,6 +41,7 @@
 | 权限管理 | 单独控制群成员是否可以使用普通 Agent 工具、读取媒体和接收文件 | 可指定 Owner，按稳定用户 ID 判断 |
 | DSH / QQChat 命令 | QQ 中直接执行 `/compact`、`/goal`、`/plan`、`/qqmodel`、`/qqstatus` 等命令 | 命令不经过模型；发送 `/qqhelp` 查看完整列表 |
 | DSH 原生界面 | 使用 DSH 默认会话、聊天区和输入框 | 支持从 DSH 主动向 QQ 发送消息 |
+| Session Preset | 每个 QQ Session 可使用 DSH 原生 preset | 新 Session 使用插件默认 preset；Session 自己选择后独立保存 |
 | 日志查看 | 在设置页查看 QQ Chat 运行日志 | 方便排查连接和消息问题 |
 
 ## 如何使用
@@ -129,6 +130,7 @@ QQ 中以 `/` 开头的消息会交给命令系统处理，不会作为普通消
 | `/qqnew`、`/qqreset`、`/qqclear` | 保留旧 Session，下一条消息开始新的 QQ Session |
 | `/compact` | 手动压缩较早的会话历史 |
 | `/qqmodel [provider/]model` | 查看或切换当前群聊/私聊的模型 |
+| `/qqpreset [preset]` | 查看或切换当前空白 Session 的 Agent Preset；对话开始后需新建 Session |
 | `/qqstop` | 中止当前生成 |
 | `/qqstatus` | 查看当前 Session、模型和生成状态 |
 | `/qqping` | 测试 QQChat 连通性 |
@@ -189,6 +191,10 @@ QQ 对话会使用 DSH 的默认聊天界面显示：
 - 支持消息引用显示
 - 支持 QQ @消息转换为用户名
 - 支持从 DSH 会话输入框主动发送 QQ 消息
+
+## Session Preset
+
+QQ Session 使用 DSH 原生的 Agent Preset 机制。插件配置中的 preset 只作为新建 QQ Session 的默认值；在 DSH Web 中为某个空白 Session 选择 preset 后，选择结果会随该 Session 保存，重启或恢复后仍优先使用该 Session 最近一次选择。也可以在该 Session 的第一条 QQ 消息中发送 `/qqpreset <preset>` 完成选择。对话开始后 DSH 不允许更换 preset，此时请先使用 `/qqnew`。插件不复制 DSH 的 preset、工具或 AgentLoop。
 
 ## 注意事项
 

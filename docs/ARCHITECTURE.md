@@ -47,14 +47,9 @@ QQ私聊 · <昵称>
 
 Client 不再注册 `sidebar.footer.action` 会话选择器。QQ Session 直接由 DSH 自己的 Session/Workspace Browser 展示和打开。
 
-DSH 用 `turn/start` 判断一个 Session 是否仍为 blank。只有静默记录的新 QQ peer 没有正常 Agent turn，因此插件创建 Session 后提交一次 `qq-chat-bootstrap` wake，并在 `agent/pre-step` 立即 reject。结果是：
+QQChat 不再提交内部 bootstrap wake。新建的静默 Session 保持 DSH 原生 blank 状态，因此可以直接使用 DSH 的 Agent Preset 选择器；第一条真正触发 Agent 的 QQ 消息才会创建正常 turn boundary。
 
-- 有 durable turn boundary；
-- Session 能进入 DSH 正常列表；
-- 没有 model step；
-- 不调用 LLM；
-- 不发送 QQ 消息；
-- bootstrap 不进入模型 history。
+插件配置中的 `agentPreset` 只用于新 Session。Session 被 DSH Web 选择过 preset 后，DSH 会写入 `agent-preset/selected` 事件；QQChat 恢复 Session 时读取该事件，优先恢复 Session 最近一次选择的 preset。
 
 ## Settings 边界
 

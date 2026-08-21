@@ -28,10 +28,6 @@ declare module '@deepseek-ai/dsh-llm' {
       form: 'notice'
       summary: string
     }
-    'qq-chat-bootstrap': {
-      kind: 'qq-chat-bootstrap'
-      plugin: 'dsh-qqchat'
-    }
   }
 }
 

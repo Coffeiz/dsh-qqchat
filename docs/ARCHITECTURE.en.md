@@ -47,7 +47,9 @@ QQ Direct · <nickname>
 
 The Client no longer registers a `sidebar.footer.action` chat picker. QQ Sessions are listed and opened by DSH's normal Session/Workspace Browser.
 
-A new silent-only peer would otherwise remain blank because DSH uses `turn/start` to decide whether a Session has begun. The plugin submits one internal `qq-chat-bootstrap` wake and rejects it in `agent/pre-step`. This leaves a durable turn boundary while producing no model step, no LLM call, no QQ output and no model-visible bootstrap content.
+QQChat no longer submits an internal bootstrap wake. A newly created silent Session remains blank according to DSH's own semantics, so the native DSH Agent Preset selector can be used before the first Agent turn. The first QQ message that actually wakes the Agent creates the normal turn boundary.
+
+The plugin's `agentPreset` setting applies only to new Sessions. When a preset is selected in DSH Web, DSH records an `agent-preset/selected` event. QQChat reads that event when resuming the Session and restores the Session's most recent preset selection.
 
 ## Settings boundary
 

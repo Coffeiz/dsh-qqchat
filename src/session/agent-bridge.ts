@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
-import type { AgentHandle, AgentOptions, AgentSetup, ModelSelectionRef, PreStepDecision as AgentPreStepDecision } from '@deepseek-ai/dsh-agent'
+import type { AgentHandle, AgentOptions, AgentSetup, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
+import { resolveSessionPreset } from '@deepseek-ai/dsh-agent-presets'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { CommandInvocation, CommandRuntime, CommandResult } from '@deepseek-ai/dsh-commands'
@@ -35,11 +36,16 @@ import type { MemorySnapshotState } from './memory-snapshot.js'
 const DSH_RUNTIME_CONTEXT_SOURCE = '@deepseek-ai/dsh-system-prompt'
 
 interface AgentPreset { id: string }
-interface AgentPresetService { resolve(id?: string): Promise<AgentPreset>; mount(ctx: Context, id: string): Promise<unknown> }
+interface AgentPresetService { resolve(id?: string): Promise<AgentPreset>; list(): Promise<AgentPreset[]>; mount(ctx: Context, id: string): Promise<unknown>; recompose(ctx: Context, id: string): Promise<AgentPreset> }
+interface SessionPersistenceService { inspect(id: SessionId): Promise<{ meta: Session['header']; events: readonly SessionEvent[] }> }
 interface SessionTitleService { get(session: Session): unknown; rename(session: Session, title: string): unknown }
 interface WorkspaceRegistryService { archivedSessionIds: readonly string[] }
 interface Composition { presetId?: string; setup?: AgentSetup }
 interface ActiveActor { chatType: ChatType; senderId: string }
+
+export function resolveQQSessionPreset(header: Session['header'], events: readonly SessionEvent[]): string | undefined {
+  return resolveSessionPreset({ header, events })
+}
 
 const MEDIA_TOOL_NAMES = new Set(['qqchat_describe_image', 'qqchat_read_file', 'qqchat_media_info'])
 const packageMetadata = createRequire(import.meta.url)('../../package.json') as { version?: string }
@@ -58,7 +64,6 @@ export class DshQQBridge {
   private readonly memorySnapshots = new Map<string, MemorySnapshotState>()
   private readonly disposeEvent: () => void
   private readonly disposeToolGate: () => void
-  private readonly disposeBootstrapGate: () => void
   private readonly disposeCommands: () => void
   private readonly disposeImageTool: () => void
   private readonly disposeMediaTools: () => void
@@ -71,10 +76,6 @@ export class DshQQBridge {
     private readonly logger: LoggerLike = console,
   ) {
     this.disposeEvent = ctx.on('session/event', (session, event) => this.onSessionEvent(session, event))
-    this.disposeBootstrapGate = ctx.on('agent/pre-step', async ({ messages }, next): Promise<AgentPreStepDecision> => {
-      if (messages.some(message => message.source.kind === 'qq-chat-bootstrap')) return { kind: 'reject' }
-      return next()
-    })
     this.disposeToolGate = ctx.on('tools/pre-execute', async (exec, next): Promise<PreToolDecision> => {
       const agent = exec.agent
       if (!agent) return next()
@@ -99,7 +100,6 @@ export class DshQQBridge {
 
   async dispose(): Promise<void> {
     this.disposeEvent()
-    this.disposeBootstrapGate()
     this.disposeToolGate()
     this.disposeImageTool()
     this.disposeMediaTools()
@@ -286,7 +286,6 @@ export class DshQQBridge {
         this.ensureSelection(live)
         this.ensureTitle(live.session, chatType, row)
         this.rememberRoute(chatType, row, live, sessionId)
-        await this.ensureVisible(live)
         return { agent: live, sessionId }
       }
       const resumed = await this.tryResume(sessionId)
@@ -294,7 +293,6 @@ export class DshQQBridge {
         this.ensureSelection(resumed.agent)
         this.ensureTitle(resumed.agent.session, chatType, row)
         this.rememberRoute(chatType, row, resumed.agent, sessionId)
-        await this.ensureVisible(resumed.agent)
         return { agent: resumed.agent, sessionId }
       }
     }
@@ -314,7 +312,6 @@ export class DshQQBridge {
     this.db.setChatSession(chatType, Number(row.id), sessionId)
     this.ensureTitle(handle.agent.session, chatType, row)
     this.rememberRoute(chatType, row, handle.agent, sessionId)
-    await this.ensureVisible(handle.agent)
     return { agent: handle.agent, sessionId }
   }
 
@@ -329,12 +326,6 @@ export class DshQQBridge {
     if (!provider || !model) return
     if (chatType === 'group') this.memory.setRoute(Number((row as GroupRow).id), provider, model, sessionId)
     else this.memory.setMemberRoute(Number((row as MemberRow).id), provider, model, sessionId)
-  }
-
-  private async ensureVisible(agent: AgentHandle['agent']): Promise<void> {
-    if (agent.session.events.some(event => event.type === 'turn/start')) return
-    agent.followup(createUserMessage({ source: { kind: 'qq-chat-bootstrap', plugin: 'dsh-qqchat' }, content: [{ type: 'text', text: 'Activate QQ Chat workspace session.' }] }))
-    await agent.whenIdle()
   }
 
   private appendDisplayIfMissing(session: Session, event: QQChatDisplayEvent): void {
@@ -375,7 +366,7 @@ export class DshQQBridge {
 
   private async tryResume(sessionId: string): Promise<AgentHandle | undefined> {
     try {
-      const composition = await this.composition()
+      const composition = await this.composition(sessionId)
       const handle = await this.ctx.agents.resume({ resumeSessionId: SessionId(sessionId), agentOptions: this.agentOptions(), setup: composition.setup })
       if (!handle.agent.session.header.cwd) {
         await handle.dispose()
@@ -458,7 +449,7 @@ export class DshQQBridge {
         .map(command => `/${command.name}${command.input?.hint ? ` ${command.input.hint}` : ''} — ${command.description}`),
       '',
       'QQChat 会话',
-      ...commands.filter(command => ['qqnew', 'qqreset', 'qqclear', 'qqmodel', 'qqstop', 'qqstatus'].includes(command.name))
+      ...commands.filter(command => ['qqnew', 'qqreset', 'qqclear', 'qqmodel', 'qqpreset', 'qqstop', 'qqstatus'].includes(command.name))
         .map(command => `/${command.name}${command.input?.hint ? ` ${command.input.hint}` : ''} — ${command.description}`),
       '',
       'QQChat 工具',
@@ -477,6 +468,7 @@ export class DshQQBridge {
       register('qqreset', '开始新会话（/qqnew 别名）', invocation => { this.requestReset(String(invocation.agent.id)); return { kind: 'success', text: '已开启新会话，下一条消息将进入新的 Session。' } }),
       register('qqclear', '开始新会话（/qqnew 别名）', invocation => { this.requestReset(String(invocation.agent.id)); return { kind: 'success', text: '已开启新会话，下一条消息将进入新的 Session。' } }),
       register('qqmodel', '查看或切换当前会话模型', invocation => this.modelCommand(invocation), '[provider/]model'),
+      register('qqpreset', '查看或切换当前 Session 的 Agent Preset', invocation => this.presetCommand(invocation), 'preset'),
       register('qqstop', '中止当前生成', invocation => {
         if (invocation.agent.status !== 'running') return { kind: 'success', text: '当前没有进行中的生成。' }
         invocation.agent.cancel({ kind: 'user' })
@@ -519,6 +511,28 @@ export class DshQQBridge {
     return { kind: 'success', text: `模型已切换：${provider}/${model}\n对话上下文保留，下一轮生效。` }
   }
 
+  private async presetCommand(invocation: CommandInvocation): Promise<CommandResult> {
+    const getService = (this.ctx as unknown as { get?: (name: string) => unknown }).get
+    const presets = getService?.call(this.ctx, 'agentPresets') as AgentPresetService | undefined
+    if (!presets) return { kind: 'error', text: '当前 DSH profile 未加载 Agent Preset 系统。' }
+    const agent = invocation.agent as AgentHandle['agent']
+    const requested = invocation.rawInput.trim()
+    if (!requested) {
+      const available = await presets.list()
+      return { kind: 'success', text: available.length ? `可用 Agent Preset：\n${available.map(preset => `/qqpreset ${preset.id}`).join('\n')}` : '当前没有可用 Agent Preset。' }
+    }
+    if (agent.session.events.some(event => event.type === 'turn/start')) {
+      return { kind: 'error', text: '当前 Session 已经开始对话，DSH 不允许更换 Agent Preset。请先使用 /qqnew 开启新 Session。' }
+    }
+    try {
+      const preset = await presets.recompose(agent.ctx, requested)
+      agent.session.append('agent-preset/selected', { agentPreset: preset.id })
+      return { kind: 'success', text: `当前 Session 已切换到 Agent Preset：${preset.id}` }
+    } catch (error) {
+      return { kind: 'error', text: `无法切换 Agent Preset：${error instanceof Error ? error.message : String(error)}` }
+    }
+  }
+
   private statusCommand(agent: AgentHandle['agent']): CommandResult {
     const current = this.selection(agent)?.current
     const messages = agent.session.events.filter(event => event.type === 'user/message' || event.type === 'assistant/message').length
@@ -529,12 +543,26 @@ export class DshQQBridge {
     }
   }
 
-  private async composition(): Promise<Composition> {
+  private async composition(sessionId?: string): Promise<Composition> {
     const getService = (this.ctx as unknown as { get?: (name: string) => unknown }).get
     const presets = getService?.call(this.ctx, 'agentPresets') as AgentPresetService | undefined
     if (!presets) return {}
-    const preset = await presets.resolve(this.config.agentPreset)
+    const persisted = sessionId ? await this.persistedPreset(sessionId) : undefined
+    const preset = await presets.resolve(persisted || this.config.agentPreset)
     return { presetId: preset.id, setup: async agentCtx => { await presets.mount(agentCtx, preset.id) } }
+  }
+
+  private async persistedPreset(sessionId: string): Promise<string | undefined> {
+    const getService = (this.ctx as unknown as { get?: (name: string) => unknown }).get
+    const persistence = getService?.call(this.ctx, 'sessionPersistence') as SessionPersistenceService | undefined
+    if (!persistence) return undefined
+    try {
+      const inspection = await persistence.inspect(SessionId(sessionId))
+      return resolveQQSessionPreset(inspection.meta, inspection.events)
+    } catch (error) {
+      this.logger.debug?.(`[dsh-qqchat] persisted preset lookup skipped: ${error instanceof Error ? error.message : String(error)}`)
+      return undefined
+    }
   }
 
   private serial<T>(key: string, task: () => Promise<T>): Promise<T> {

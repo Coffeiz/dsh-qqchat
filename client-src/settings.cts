@@ -201,7 +201,7 @@ export function QQSettings({ rpc }: { rpc: Rpc }) {
     h('div', { className: 'qqSetting' },
       h('div', null,
         h('div', { className: 'qqSettingTitle' }, '启用记忆系统'),
-        h('div', { className: 'qqSettingHelp' }, '记忆会注入每轮 Agent 上下文，并在空闲时整理近期消息；这可能降低上下文缓存命中率并增加输入 token。关闭后停止记忆注入和后台整理，但不会删除已有记忆。')),
+        h('div', { className: 'qqSettingHelp' }, '记忆会在新 Session、上下文 TTL 过期、记忆变化或 Session 压缩后刷新，不会每轮重复注入完整上下文；后台会在空闲时整理近期消息。启用记忆可能降低上下文缓存命中率并增加输入 token。关闭后停止记忆注入和后台整理，但不会删除已有记忆。')),
       h('div', { className: 'qqControl' }, h(Button, { size: 'sm', variant: settings.memoryEnabled ? 'primary' : 'outline', onClick: () => void patch({ memoryEnabled: !settings.memoryEnabled }) }, settings.memoryEnabled ? '已启用' : '已关闭'))))
   const ownerSetting = !settings.groupMembersCanUseTools
     ? h('div', { className: 'qqSetting' },

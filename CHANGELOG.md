@@ -11,6 +11,8 @@
 
 ### 架构与运行时
 
+- 支持每个 QQ Session 使用 DSH 原生 Agent Preset；插件配置的 `agentPreset` 只作为新 Session 默认值，恢复时优先读取 Session 持久化的 preset 选择。
+- 移除用于唤醒空白 Session 的内部 bootstrap turn，让 DSH 原生 preset 选择器可以在首轮 QQ 消息前使用。
 - 将 QQ Chat 插件迁移到 TypeScript，补充 Host、Client、构建产物和类型声明的独立配置。
 - 将 QQ 聊天接入 DSH 原生 Workspace，使用原生会话侧栏和会话路由，不再在插件中重复维护一套聊天列表。
 - 将触发 Agent 的 QQ 消息按原生 user turn 写入 DSH 会话，避免 SQLite 转录与会话转录重复、当前消息被重复注入历史的问题。

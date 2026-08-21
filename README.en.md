@@ -42,6 +42,7 @@
 | Permission management | Separately controls group-member tools, media reading and file receiving | Owner is matched by stable user ID |
 | Native DSH commands | Runs `/compact`, `/goal`, `/plan`, `/qqmodel`, `/qqstatus` and more directly from QQ | Commands do not go through the model; `/qqhelp` lists the full set |
 | Native DSH UI | Uses the normal Session list, Conversation surface and composer styling | QQ Sessions remain ungrouped in DSH |
+| Session presets | Each QQ Session can use DSH's native Agent Preset mechanism | The plugin default applies only to new Sessions; a Session's own selection is persisted |
 | Diagnostics | Shows plugin logs in Settings | Useful for connection and delivery troubleshooting |
 
 ## How to use
@@ -153,6 +154,7 @@ Messages beginning with `/` are handled directly by the command system and are n
 | `/qqnew`, `/qqreset`, `/qqclear` | Keep the old Session and start a new one on the next message |
 | `/compact` | Compact older conversation history |
 | `/qqmodel [provider/]model` | Show or switch the current Session model |
+| `/qqpreset [preset]` | List or switch the Agent Preset for the current blank Session; start a new Session after conversation begins |
 | `/qqstop` | Stop the current generation |
 | `/qqstatus` | Show Session, model and generation status |
 | `/qqping` | Check QQChat connectivity |
@@ -207,6 +209,10 @@ QQ conversations use DSH's default Conversation UI:
 - Quoted messages are displayed.
 - QQ `@` mentions are converted to usernames when available.
 - The DSH Session composer can proactively send messages to QQ.
+
+## Session presets
+
+QQ Sessions use DSH's native Agent Preset mechanism. The preset configured for the plugin is only the default for new QQ Sessions. When a preset is selected for a blank Session in DSH Web, the selection is persisted with that Session and takes priority when the Session is resumed after a restart. You can also send `/qqpreset <preset>` as the first QQ message for that Session. Once a conversation has started, DSH locks the preset; use `/qqnew` to start another Session. The plugin does not copy DSH presets, tools or the AgentLoop.
 
 ## Notes
 
