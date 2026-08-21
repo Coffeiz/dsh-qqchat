@@ -31,6 +31,7 @@
 | --- | --- | --- |
 | QQ group and direct chat | Receives group and C2C messages | One isolated DSH Session per group or direct peer |
 | QR connection | Binds an official QQ Bot from **Settings -> QQ Chat** | Cancel the binding and scan again when needed |
+| Manual connection | Connects with AppID and AppSecret from the settings page | Useful for headless servers or QR failures; the secret is sent only to the Host |
 | Group receive modes | Auto reply, Mention only or Silent record | Silent record stores messages without waking the Agent |
 | Message formats | Smart, Markdown or Plain compatibility | Group and direct-chat formats are configured separately; groups default to Plain compatibility |
 | Direct-chat streaming | Optionally uses QQ's official streaming message API for private chats | Private chats only; Plain compatibility disables it automatically; some clients may not display streaming |
@@ -80,6 +81,8 @@
 4. Authorize the desired official Bot.
 5. The Gateway starts automatically. Use **Cancel connection** before scanning again if you need to bind another Bot.
 
+If QR authorization is inconvenient, choose **Manual configuration** and enter the AppID and AppSecret from the QQ Open Platform. Select the sandbox environment when needed. The plugin validates the credentials before saving them and starting the Gateway.
+
 The Host decrypts and stores the AppSecret in the local plugin database. The temporary QR AES key never travels through the browser Client RPC.
 
 ### Chat in QQ
@@ -115,7 +118,7 @@ npx @deepseek-ai/dsh --profile web
 Before npm publication, install the branch directly from GitHub:
 
 ```bash
-npx @deepseek-ai/dsh plugin --profile qqchat add @deepseek-ai/dsh-web-app "git+ssh://git@github.com/Coffeiz/dsh-qqchat.git#agent/typescript-migration"
+npx @deepseek-ai/dsh plugin --profile qqchat add @deepseek-ai/dsh-web-app dsh-qqchat
 npx @deepseek-ai/dsh --profile qqchat
 ```
 

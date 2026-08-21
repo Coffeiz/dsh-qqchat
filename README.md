@@ -28,6 +28,7 @@
 | --- | --- | --- |
 | QQ 群聊与私聊 | 接收 QQ 官方 Bot 的群聊和私聊消息 | 每个群、每个私聊对象对应独立 DSH 会话 |
 | 扫码连接 | 在 **设置 → QQ Chat** 中扫码绑定 QQ Bot | 支持取消连接后重新绑定 |
+| 手动连接 | 在设置页填写 AppID 和 AppSecret 连接 QQ Bot | 适合无手机、服务器或扫码失败场景；密钥只提交到 Host |
 | 断线重连 | QQ Gateway 断线后自动恢复连接 | 无需重复扫码 |
 | 群聊回复模式 | 自动回应、@回复、静默记录 | 可在设置页随时切换 |
 | 消息格式兼容 | 智能兼容、Markdown、纯文本兼容 | 群聊和私聊可分别设置；群聊默认纯文本兼容 |
@@ -90,7 +91,7 @@ npx @deepseek-ai/dsh --profile web
 当前开发分支也可以直接从 GitHub 安装：
 
 ```bash
-npx @deepseek-ai/dsh plugin --profile qqchat add @deepseek-ai/dsh-web-app "git+ssh://git@github.com/Coffeiz/dsh-qqchat.git#agent/typescript-migration"
+npx @deepseek-ai/dsh plugin --profile qqchat add @deepseek-ai/dsh-web-app dsh-qqchat
 npx @deepseek-ai/dsh --profile qqchat
 ```
 
@@ -101,6 +102,8 @@ npx @deepseek-ai/dsh --profile qqchat
 3. 点击 **扫码连接**。
 4. 使用手机 QQ 扫描二维码，并选择要授权的官方 Bot。
 5. 授权完成后，QQ Gateway 会自动连接。
+
+如果无法扫码，也可以选择 **手动配置**，填写 QQ 开放平台的 AppID 和 AppSecret，并按需选择沙箱环境。插件会先验证凭据，验证成功后再保存并启动 Gateway。
 
 连接成功后，QQ Chat 的设置和对话会出现在 DSH 中。
 

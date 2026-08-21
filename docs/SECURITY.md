@@ -6,7 +6,7 @@ QQChat 同时接触 QQ 凭据、用户身份、群消息和 DSH Session。安全
 
 ## 凭据边界
 
-- AppSecret、QQ Token、扫码 AES 临时 key 只存在 Host。
+- AppSecret、QQ Token、扫码 AES 临时 key 只存在 Host；手动连接表单只通过 loopback RPC 提交 AppSecret，验证失败时不保存新凭据。
 - 浏览器只通过受限 RPC 获取状态和已经脱敏的展示数据。
 - 凭据不写入 URL、日志、前端状态、测试 fixture 或 Git。
 - SQLite 数据目录默认位于 `$DSH_HOME/plugins/dsh-qqchat/`，应由本地用户权限保护。

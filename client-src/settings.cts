@@ -15,6 +15,10 @@ export function QQSettings({ rpc }: { rpc: Rpc }) {
   const [members, setMembers] = useState<KnownMember[]>(() => qqSettingsCache?.members || [])
   const [loading, setLoading] = useState(() => qqSettingsCache === undefined)
   const [auth, setAuth] = useState<{ taskId: string; qrDataUrl: string } | null>(null)
+  const [connectionMode, setConnectionMode] = useState<'qr' | 'manual'>('qr')
+  const [manualAppId, setManualAppId] = useState('')
+  const [manualAppSecret, setManualAppSecret] = useState('')
+  const [manualSandbox, setManualSandbox] = useState(false)
   const [logs, setLogs] = useState<PluginLog[] | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -78,6 +82,15 @@ export function QQSettings({ rpc }: { rpc: Rpc }) {
     setBusy(true)
     try { setAuth(await call<{ taskId: string; qrDataUrl: string }>(rpc, 'auth/start')); setError('') } catch (err) { setError(err instanceof Error ? err.message : String(err)) } finally { setBusy(false) }
   }
+  const connectManual = async () => {
+    setBusy(true)
+    try {
+      await call(rpc, 'account/manual-connect', { appId: manualAppId, appSecret: manualAppSecret, sandbox: manualSandbox })
+      setManualAppSecret('')
+      await refresh()
+      setError('')
+    } catch (err) { setError(err instanceof Error ? err.message : String(err)) } finally { setBusy(false) }
+  }
   const disconnect = async () => {
     if (!account) return
     setBusy(true)
@@ -128,7 +141,24 @@ export function QQSettings({ rpc }: { rpc: Rpc }) {
     h('div', { className: 'qqStatus' }, loading ? '加载中…' : account ? (account.gatewayStatus === 'online' ? '已连接' : '已授权') : '未连接', account && h(Button, { size: 'sm', variant: 'outline', disabled: busy, onClick: () => void disconnect() }, '取消连接')))
 
   if (loading) return h('div', { className: 'qqs' }, head, h('div', { className: 'qqMuted' }, '正在读取 QQ Chat 设置…'))
-  if (!account) return h('div', { className: 'qqs' }, head, error && h('div', { className: 'qqError' }, error), h('div', { className: 'qqConnect' }, h('div', { className: 'qqsTitle' }, auth ? '使用 QQ 扫码授权' : '连接 QQ Bot'), h('div', { className: 'qqMuted' }, '扫码和凭据解密都在 DSH Host 侧完成。'), auth && h('div', { className: 'qqQr' }, h('img', { src: auth.qrDataUrl, alt: 'QQ 授权二维码' })), h(Button, { variant: 'primary', disabled: busy, onClick: () => void startAuth() }, auth ? '重新生成二维码' : '扫码连接')))
+  if (!account) {
+    const modeButtons = h('div', { className: 'qqChoiceButtons' },
+      h(Button, { size: 'sm', variant: connectionMode === 'qr' ? 'primary' : 'outline', onClick: () => { setConnectionMode('qr'); setError('') } }, '扫码连接'),
+      h(Button, { size: 'sm', variant: connectionMode === 'manual' ? 'primary' : 'outline', onClick: () => { setConnectionMode('manual'); setAuth(null); setError('') } }, '手动配置'))
+    const qrBody = h('div', { className: 'qqConnect' },
+      h('div', { className: 'qqsTitle' }, auth ? '使用 QQ 扫码授权' : '连接 QQ Bot'),
+      h('div', { className: 'qqMuted' }, '使用手机 QQ 扫描官方 Bot 授权二维码。扫码和凭据解密都在 DSH Host 侧完成。'),
+      auth && h('div', { className: 'qqQr' }, h('img', { src: auth.qrDataUrl, alt: 'QQ 授权二维码' })),
+      h(Button, { variant: 'primary', disabled: busy, onClick: () => void startAuth() }, auth ? '重新生成二维码' : '生成二维码'))
+    const manualBody = h('div', { className: 'qqConnect qqManualConnect' },
+      h('div', { className: 'qqsTitle' }, '手动配置 QQ Bot'),
+      h('div', { className: 'qqMuted' }, '填写 QQ 开放平台创建的 AppID 和 AppSecret。密钥只提交到 DSH Host，不会显示在会话或日志中。'),
+      h(Input, { value: manualAppId, placeholder: 'AppID', onChange: (event: import('react').ChangeEvent<HTMLInputElement>) => setManualAppId(event.target.value) }),
+      h(Input, { type: 'password', value: manualAppSecret, placeholder: 'AppSecret', onChange: (event: import('react').ChangeEvent<HTMLInputElement>) => setManualAppSecret(event.target.value) }),
+      h('label', { className: 'qqCheckRow' }, h('input', { type: 'checkbox', checked: manualSandbox, onChange: (event: import('react').ChangeEvent<HTMLInputElement>) => setManualSandbox(event.target.checked) }), h('span', null, '使用沙箱环境')),
+      h(Button, { variant: 'primary', disabled: busy || !manualAppId.trim() || !manualAppSecret.trim(), onClick: () => void connectManual() }, busy ? '验证并连接中…' : '验证并连接'))
+    return h('div', { className: 'qqs' }, head, error && h('div', { className: 'qqError' }, error), modeButtons, connectionMode === 'qr' ? qrBody : manualBody)
+  }
   if (!settings) return h('div', { className: 'qqs' }, head, h('div', { className: 'qqMuted' }, '正在读取设置…'))
 
   const receiveButtons = h('div', { className: 'qqChoiceButtons' },
