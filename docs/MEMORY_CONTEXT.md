@@ -241,7 +241,7 @@ expiresAt=2026-08-21T00:30:00.000Z
 - [x] 利用 DSH runtime-context projection 保证模型侧只保留当前有效快照；
 - [x] 验证快照读取失败路径不会覆盖已有有效上下文；
 - [x] 重启 DSH Web 并完成运行时 HTTP smoke 检查；
-- [ ] 在真实持续 QQ 对话中做长期 Session 观察，确认跨多次 compact 后仍保持单份有效快照。
+- [x] 在真实持续 QQ 对话中做长期 Session 观察，确认跨多次 compact 后仍保持单份有效快照。
 
 ## 10. 非目标
 
