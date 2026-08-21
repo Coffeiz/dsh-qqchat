@@ -77,6 +77,32 @@ test('queued private stream updates receive the stream id from the first respons
   }
 })
 
-function response(body: Record<string, unknown>): Response {
-  return { ok: true, status: 200, json: async () => body } as Response
+test('gateway URL refreshes a cached token after HTTP 401', async () => {
+  const originalFetch = globalThis.fetch
+  const requests: Array<{ url: string; authorization?: string }> = []
+  let tokenCalls = 0
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input)
+    const authorization = new Headers(init?.headers).get('authorization') || undefined
+    requests.push({ url, authorization })
+    if (url.includes('/app/getAppAccessToken')) {
+      tokenCalls += 1
+      return response({ access_token: `token-${tokenCalls}`, expires_in: 7200 })
+    }
+    if (requests.filter(request => request.url.endsWith('/gateway')).length === 1) return response({}, 401)
+    return response({ url: 'wss://gateway.example' })
+  }) as typeof fetch
+  try {
+    const api = new QQApiClient({} as never, { replyFormat: 'compat' } as never)
+    const url = await api.gatewayUrl({ id: 1, app_id: 'app', app_secret: 'secret', sandbox: false } as never)
+    assert.equal(url, 'wss://gateway.example')
+    assert.equal(tokenCalls, 2)
+    assert.deepEqual(requests.filter(request => request.url.endsWith('/gateway')).map(request => request.authorization), ['QQBot token-1', 'QQBot token-2'])
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+function response(body: Record<string, unknown>, status = 200): Response {
+  return { ok: status >= 200 && status < 300, status, json: async () => body } as Response
 }
