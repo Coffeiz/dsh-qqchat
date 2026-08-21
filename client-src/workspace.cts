@@ -37,12 +37,14 @@ function AttachmentCards({ attachments, sessionId }: { attachments?: QQAttachmen
 export function QQTranscriptNode({ node }: { node: QQNode }) {
   const data = node.data
   const outbound = data.direction === 'outbound' || data.isOwner === true
+  const hasQuote = Boolean(data.quote) || Boolean(data.quotedText)
+  const quoteText = data.quote?.text || data.quotedText || ''
   return h('div', { className: `qqTranscript${outbound ? ' out' : ''}` },
     h('div', { className: 'qqTranscriptBody' },
       !data.isOwner && h('div', { className: 'qqTranscriptMeta' }, data.senderName || (outbound ? 'Owner' : 'QQ 用户'), ' · ', time(data.createdAt)),
-      data.quotedText && h('div', { className: 'qqQuote', title: data.quotedText },
+      hasQuote && h('div', { className: 'qqQuote', title: quoteText },
         h('div', { className: 'qqQuoteLabel' }, '引用消息'),
-        h('div', { className: 'qqQuoteText' }, data.quotedText),
+        quoteText ? h('div', { className: 'qqQuoteText' }, quoteText) : null,
         data.quote?.senderName ? h('div', { className: 'qqQuoteSender' }, data.quote.senderName) : null,
         h(AttachmentCards, { attachments: data.quote?.attachments, sessionId: data.sessionId })),
       h('div', { className: 'qqBubble' }, data.content),

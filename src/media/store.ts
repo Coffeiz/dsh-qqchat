@@ -21,7 +21,7 @@ export class QQMediaStore {
   async ingest(accountId: number, messageId: string, attachments: QQAttachmentInput[]): Promise<StoredAttachmentSummary[]> {
     const result: StoredAttachmentSummary[] = []
     let messageBytes = 0
-    for (const input of attachments.slice(0, 12)) {
+    for (const [sourceIndex, input] of attachments.slice(0, 12).entries()) {
       try {
         if (input.attachmentId) {
           const existingById = this.db.attachmentById(input.attachmentId)
@@ -29,7 +29,7 @@ export class QQMediaStore {
             try {
               await access(existingById.localPath)
               this.db.extendAttachment(existingById.id, Date.now() + RETENTION_MS)
-            result.push({ ...existingById, quoted: Boolean(input.quoted), sourceFileId: input.platformFileId || existingById.sourceFileId })
+            result.push({ ...existingById, quoted: Boolean(input.quoted), sourceFileId: input.platformFileId || existingById.sourceFileId, sourceIndex })
               continue
             } catch {}
           }
@@ -39,7 +39,7 @@ export class QQMediaStore {
           try {
             await access(reusable.localPath)
             this.db.extendAttachment(reusable.id, Date.now() + RETENTION_MS)
-            result.push({ ...reusable, quoted: Boolean(input.quoted), sourceFileId: input.platformFileId || reusable.sourceFileId })
+            result.push({ ...reusable, quoted: Boolean(input.quoted), sourceFileId: input.platformFileId || reusable.sourceFileId, sourceIndex })
             continue
           } catch {}
         }
@@ -55,7 +55,7 @@ export class QQMediaStore {
         const kind = input.kind || inferKind(input.contentType, input.filename)
         const summary: StoredAttachmentSummary = {
           id, kind, filename: safeFilename(input.filename), contentType: input.contentType,
-          sizeBytes: downloaded.data.byteLength, quoted: Boolean(input.quoted), sourceFileId: input.platformFileId, localPath: path, imageRef,
+          sizeBytes: downloaded.data.byteLength, quoted: Boolean(input.quoted), sourceFileId: input.platformFileId, sourceIndex, localPath: path, imageRef,
         }
         this.db.saveAttachment({ id, accountId, sourceMessageId: messageId, sourceFileId: input.platformFileId,
           kind, filename: summary.filename, contentType: input.contentType, sizeBytes: summary.sizeBytes,

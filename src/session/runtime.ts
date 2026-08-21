@@ -308,8 +308,7 @@ function sanitizeQuote(quote: QQQuoteInput, includeAttachments = true, stored: S
     ...quote,
     attachments: includeAttachments
       ? quote.attachments.map(({ sourceUrl: _sourceUrl, ...attachment }, index) => {
-          const match = quotedStored.find(item => item.id === attachment.attachmentId || (attachment.platformFileId && item.sourceFileId === attachment.platformFileId))
-            || quotedStored[index]
+          const match = quotedStored.find(item => item.id === attachment.attachmentId || (attachment.platformFileId && item.sourceFileId === attachment.platformFileId) || item.sourceIndex === index)
           return match ? { ...attachment, attachmentId: match.id } : attachment
         })
       : [],
@@ -357,7 +356,7 @@ export function mergeIndexedQuote(message: QQNormalizedMessage, indexed: import(
 export function indexAttachments(inputs: QQAttachmentInput[], stored: StoredAttachmentSummary[]): QQAttachmentInput[] {
   const ownStored = stored.filter(item => !item.quoted)
   return inputs.map((input, index) => {
-    const match = ownStored.find(item => input.platformFileId && item.sourceFileId === input.platformFileId) || ownStored[index]
+    const match = ownStored.find(item => (input.platformFileId && item.sourceFileId === input.platformFileId) || item.sourceIndex === index)
     return {
       filename: input.filename, ...(input.contentType ? { contentType: input.contentType } : {}),
       ...(input.size !== undefined ? { size: input.size } : {}), ...(input.width !== undefined ? { width: input.width } : {}),

@@ -54,3 +54,12 @@ test('quote index metadata strips source URLs and maps stored attachment IDs', (
   assert.equal(result[1]?.attachmentId, 'qqatt-2')
   assert.equal(result[0]?.platformFileId, 'file-1')
 })
+
+test('attachment mapping never uses a compacted ordinal after an earlier download fails', () => {
+  const result = indexAttachments([
+    { filename: 'failed.png', kind: 'image' },
+    { filename: 'kept.png', kind: 'image' },
+  ], [{ id: 'qqatt-kept', kind: 'image', filename: 'kept.png', sizeBytes: 10, quoted: false, sourceIndex: 1 }])
+  assert.equal(result[0]?.attachmentId, undefined)
+  assert.equal(result[1]?.attachmentId, 'qqatt-kept')
+})

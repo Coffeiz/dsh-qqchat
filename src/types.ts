@@ -53,6 +53,8 @@ export interface StoredAttachmentSummary {
   quoted: boolean
   /** Platform file identity used to preserve one-to-one input mapping. */
   sourceFileId?: string
+  /** Position in the original QQ attachment list; used only as a lossless fallback. */
+  sourceIndex?: number
   localPath?: string
   imageRef?: ImageAttachmentRef
 }

@@ -148,6 +148,7 @@ export class MemoryEngine {
       senderName: message.direction === 'outbound' ? 'DSH Agent' : (message.display_name || ''),
       text: message.content,
       quotedText: message.quoted_text || '',
+      ...(parseReflectionQuote(message.quote_json) ? { quote: parseReflectionQuote(message.quote_json) } : {}),
     }))
 
     const input = {
@@ -199,6 +200,7 @@ export class MemoryEngine {
         senderName: message.direction === 'outbound' ? 'DSH Agent' : (member.display_name || ''),
         text: message.content,
         quotedText: message.quoted_text || '',
+        ...(parseReflectionQuote(message.quote_json) ? { quote: parseReflectionQuote(message.quote_json) } : {}),
       })),
     }
     const reflected = await this.generateReflection(route, memberMemorySystemPrompt(), input, `qqchat-member-memory-${memberId}`) as MemberReflectionPayload
@@ -378,7 +380,7 @@ export class MemoryEngine {
 
 function memorySystemPrompt(): string {
   return `你负责整理一个 QQ 群的长期记忆。目标是稳定、克制、可追溯地维护群 scope 与成员 scope，规则：
-1. senderId 是唯一可靠身份，不根据昵称猜身份；不同 senderId 的个人事实绝不能混写。成员记录中的 name/aliases/nicknames 只用于称呼和检索。
+1. senderId 是唯一可靠身份，不根据昵称猜身份；不同 senderId 的个人事实绝不能混写。成员记录中的 name/aliases/nicknames 只用于称呼和检索。引用内容属于 quote.senderId；除非 quote.senderId 与当前 senderId 相同，否则不得把引用中的个人事实归给当前发言人。
 2. 群 scope 只写群级角色、关系、共同决定、长期话题、群内约定；个人稳定信息写到对应 member。
 3. 不把一次性寒暄、玩笑、临时情绪上升为长期事实；不确定信息宁可不记。
 4. existing 是已有记忆，应在其基础上更新，而不是无条件推翻。
@@ -390,13 +392,33 @@ function memorySystemPrompt(): string {
 }
 
 function memberMemorySystemPrompt(): string {
-  return `你负责整理一个 QQ 私聊成员的长期记忆。senderId 是唯一可靠身份，displayName 只用于展示。规则：
+  return `你负责整理一个 QQ 私聊成员的长期记忆。senderId 是唯一可靠身份，displayName 只用于展示。引用内容属于 quote.senderId；除非 quote.senderId 与当前成员 senderId 相同，否则不得把引用中的个人事实归给当前成员。规则：
 1. 只记录这个成员稳定且未来有用的信息，不根据昵称猜身份。
 2. profile 写较稳定的个人事实，必须输出带 type/text/ts 的条目；type 只能是 name、address、pronoun、background、preference、note。pattern 写多次出现的偏好、习惯或行为模式；summary 写当前值得保留的紧凑状态；memory 写长期项目、关系、约定和背景。
 3. 一次性寒暄、玩笑、短暂情绪和未经确认的推断不要写入长期记忆。
 4. existing 是已有记忆，应在其基础上克制更新。
 5. 输出严格 JSON，不要 Markdown 代码块、解释或额外文字。
 输出结构：{"profile":[{"type":"name|address|pronoun|background|preference|note","text":"...","ts":0}],"pattern":{},"summary":"","memory":"","daily":""}`
+}
+
+function parseReflectionQuote(value: string | null): { senderId?: string; senderName?: string; messageId?: string; text: string; attachments: Array<Record<string, unknown>> } | undefined {
+  if (!value) return undefined
+  try {
+    const raw = JSON.parse(value) as unknown
+    if (!raw || typeof raw !== 'object') return undefined
+    const quote = raw as Record<string, unknown>
+    return {
+      ...(typeof quote.senderId === 'string' && quote.senderId ? { senderId: quote.senderId } : {}),
+      ...(typeof quote.senderName === 'string' && quote.senderName ? { senderName: quote.senderName } : {}),
+      ...(typeof quote.messageId === 'string' && quote.messageId ? { messageId: quote.messageId } : {}),
+      text: typeof quote.text === 'string' ? quote.text : '',
+      attachments: Array.isArray(quote.attachments)
+        ? quote.attachments.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+        : [],
+    }
+  } catch {
+    return undefined
+  }
 }
 
 function groupCompressionSystemPrompt(): string {

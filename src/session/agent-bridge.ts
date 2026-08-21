@@ -577,6 +577,7 @@ function formatDisplayQuote(event: QQChatDisplayEvent): string {
     quote.senderName ? `显示名=${quote.senderName}` : '',
     quote.messageId ? `消息ID=${quote.messageId}` : '',
     `正文=${quote.text || '(空消息)'}`,
+    quote.attachments.length ? `附件=${quote.attachments.map(attachment => `${attachment.kind || 'file'}:${attachment.filename}${attachment.attachmentId ? ` (attachment_id=${attachment.attachmentId})` : ''}`).join('、')}` : '',
   ].filter(Boolean).join('\n')
 }
 
@@ -600,6 +601,7 @@ function displayEventPayload(event: QQChatDisplayEvent): QQChatDisplayEvent {
       ...(attachment.height !== undefined ? { height: Number(attachment.height) } : {}),
       ...(attachment.durationMs !== undefined ? { durationMs: Number(attachment.durationMs) } : {}),
       ...(attachment.platformFileId ? { platformFileId: String(attachment.platformFileId) } : {}),
+      ...(attachment.size !== undefined ? { sizeBytes: Number(attachment.size) } : {}),
       ...(attachment.quoted !== undefined ? { quoted: Boolean(attachment.quoted) } : {}),
       ...(attachment.kind ? { kind: attachment.kind } : {}),
     })),
