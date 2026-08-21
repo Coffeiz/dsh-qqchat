@@ -202,7 +202,7 @@ function publicGroup(row: GroupRow | GroupListRow) {
   const aggregate = row as Partial<GroupListRow>
   return {
     id: Number(row.id), accountId: Number(row.account_id), platformGroupId: row.platform_group_id,
-    name: row.name || '', enabled: row.enabled === 1, requiresAt: row.requires_at === 1,
+    name: row.name || '', enabled: row.enabled === 1,
     readEnabled: row.read_enabled === 1, dshSessionId: row.dsh_session_id || null,
     memberCount: Number(aggregate.member_count || 0), messageCount: Number(aggregate.message_count || 0),
     lastMessageAt: aggregate.last_message_at ? Number(aggregate.last_message_at) : null,
@@ -289,7 +289,6 @@ function asGroupPatch(value: unknown): GroupPatch {
   const patch: GroupPatch = {}
   if (typeof record.name === 'string') patch.name = record.name
   if (typeof record.enabled === 'boolean') patch.enabled = record.enabled
-  if (typeof record.requiresAt === 'boolean') patch.requiresAt = record.requiresAt
   if (typeof record.readEnabled === 'boolean') patch.readEnabled = record.readEnabled
   return patch
 }

@@ -128,7 +128,6 @@ export class QQChatDatabase {
         platform_group_id TEXT NOT NULL,
         name TEXT,
         enabled INTEGER NOT NULL DEFAULT 1,
-        requires_at INTEGER NOT NULL DEFAULT 1,
         read_enabled INTEGER NOT NULL DEFAULT 1,
         dsh_session_id TEXT,
         created_at INTEGER NOT NULL,
@@ -231,6 +230,8 @@ export class QQChatDatabase {
       );
     `)
     const columns = new Set(many<{ name: string }>(this.db.prepare('PRAGMA table_info(group_members)').all()).map(column => column.name))
+    const groupColumns = new Set(many<{ name: string }>(this.db.prepare('PRAGMA table_info(groups)').all()).map(column => column.name))
+    if (groupColumns.has('requires_at')) this.db.exec('ALTER TABLE groups DROP COLUMN requires_at')
     if (!columns.has('aliases_json')) this.db.exec("ALTER TABLE group_members ADD COLUMN aliases_json TEXT NOT NULL DEFAULT '[]'")
     if (!columns.has('nicknames_json')) this.db.exec("ALTER TABLE group_members ADD COLUMN nicknames_json TEXT NOT NULL DEFAULT '[]'")
     if (!columns.has('message_count')) this.db.exec('ALTER TABLE group_members ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0')
@@ -369,11 +370,11 @@ export class QQChatDatabase {
 
   upsertGroup(accountId: number, platformGroupId: string, defaults: GroupDefaults = {}): GroupRow {
     const t = now()
-    this.db.prepare(`INSERT INTO groups(account_id,platform_group_id,name,enabled,requires_at,read_enabled,created_at,updated_at)
-      VALUES(?,?,?,?,?,?,?,?)
+    this.db.prepare(`INSERT INTO groups(account_id,platform_group_id,name,enabled,read_enabled,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?)
       ON CONFLICT(account_id,platform_group_id) DO UPDATE SET updated_at=excluded.updated_at`)
-      .run(accountId, platformGroupId, defaults.name || null, defaults.enabled === false ? 0 : 1,
-        defaults.requiresAt === false ? 0 : 1, defaults.readEnabled === false ? 0 : 1, t, t)
+    .run(accountId, platformGroupId, defaults.name || null, defaults.enabled === false ? 0 : 1,
+        defaults.readEnabled === false ? 0 : 1, t, t)
     const group = this.groupByPlatform(accountId, platformGroupId)
     if (!group) throw new Error('QQ group upsert did not return a row')
     return group
@@ -393,11 +394,10 @@ export class QQChatDatabase {
     const next = {
       name: patch.name === undefined ? row.name : String(patch.name || ''),
       enabled: patch.enabled === undefined ? row.enabled : patch.enabled ? 1 : 0,
-      requires_at: patch.requiresAt === undefined ? row.requires_at : patch.requiresAt ? 1 : 0,
       read_enabled: patch.readEnabled === undefined ? row.read_enabled : patch.readEnabled ? 1 : 0,
     }
-    this.db.prepare('UPDATE groups SET name=?,enabled=?,requires_at=?,read_enabled=?,updated_at=? WHERE id=?')
-      .run(next.name, next.enabled, next.requires_at, next.read_enabled, now(), id)
+    this.db.prepare('UPDATE groups SET name=?,enabled=?,read_enabled=?,updated_at=? WHERE id=?')
+      .run(next.name, next.enabled, next.read_enabled, now(), id)
     return this.groupById(id)
   }
 

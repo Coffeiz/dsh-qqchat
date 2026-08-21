@@ -13,7 +13,7 @@ function withDb<T>(fn: (db: QQChatDatabase) => T): T {
 
 test('SQLite keeps group/member identity and deduplicates platform messages', () => withDb(db => {
   const account = db.upsertAccount('app-1', 'secret-1')
-  const group = db.upsertGroup(Number(account.id), 'group-openid', { requiresAt: true, readEnabled: true })
+  const group = db.upsertGroup(Number(account.id), 'group-openid', { readEnabled: true })
   const member = db.upsertMember(Number(account.id), 'user-openid', 'Alice')
   db.touchGroupMember(Number(group.id), Number(member.id), '群昵称')
   db.touchGroupMember(Number(group.id), Number(member.id), '新昵称')

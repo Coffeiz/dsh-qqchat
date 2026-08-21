@@ -4,7 +4,7 @@ import { shouldReplyToGroup } from '../src/session/runtime.js'
 
 const group = { enabled: 1 as const, read_enabled: 1 as const }
 
-test('global auto mode replies for existing groups regardless of legacy requires_at', () => {
+test('global auto mode replies for existing groups', () => {
   assert.equal(shouldReplyToGroup('auto', group, false), true)
 })
 

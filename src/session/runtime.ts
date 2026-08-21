@@ -168,7 +168,7 @@ export class QQChatRuntime {
     if (message.chatType === 'group') {
       if (!message.groupOpenid) return
       const mode = settings.groupReceiveMode
-      group = this.db.upsertGroup(message.accountId, message.groupOpenid, { enabled: true, requiresAt: mode === 'mention', readEnabled: true })
+      group = this.db.upsertGroup(message.accountId, message.groupOpenid, { enabled: true, readEnabled: true })
       this.db.touchGroupMember(Number(group.id), Number(member.id), message.senderName)
       if (group.enabled !== 1 || group.read_enabled !== 1) return
       shouldReply = shouldReplyToGroup(mode, group, message.mentioned)

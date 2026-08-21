@@ -159,7 +159,6 @@ export interface GroupRow {
   platform_group_id: string
   name: string | null
   enabled: 0 | 1
-  requires_at: 0 | 1
   read_enabled: 0 | 1
   dsh_session_id: string | null
   created_at: number
@@ -191,14 +190,12 @@ export interface ChatTargetRow {
 export interface GroupDefaults {
   name?: string
   enabled?: boolean
-  requiresAt?: boolean
   readEnabled?: boolean
 }
 
 export interface GroupPatch {
   name?: string
   enabled?: boolean
-  requiresAt?: boolean
   readEnabled?: boolean
 }
 
