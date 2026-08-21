@@ -217,7 +217,7 @@ QQ Sessions use DSH's native Agent Preset mechanism. The preset configured for t
 ## Notes
 
 - An official QQ Bot is required; personal QQ account login is not supported.
-- `0.2.1` is still being refined; test with a dedicated Bot and group first.
+- `0.2.2` is still being refined; test with a dedicated Bot and group first.
 - Rich media, full QQ emoji handling and some complex message formats may require compatibility mode.
 - Uninstalling the plugin does not automatically delete saved chat or memory data.
 
