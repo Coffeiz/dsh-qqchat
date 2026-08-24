@@ -128,9 +128,12 @@ export class DshQQBridge {
     const { agent, sessionId } = await this.ensureAgent(event.chatType, row)
     event.sessionId = sessionId
     if (event.isOwner) {
-      const hasImages = event.attachments?.some(attachment => attachment.kind === 'image' && this.db.attachmentById(attachment.id)?.imageRef) === true
-      if (!hasImages || await this.imageRouteAvailable(agent)) this.appendOwnerMessageIfMissing(agent.session, event)
-      else this.appendDisplayIfMissing(agent.session, event)
+      // Keep owner messages as native user/message events even when they carry
+      // images. DSH now owns the image projection: visual routes receive the
+      // durable image block, while text-only routes receive its stable text
+      // placeholder. Falling back to a display-only event here would discard
+      // the owner's message semantics before DSH can apply that policy.
+      this.appendOwnerMessageIfMissing(agent.session, event)
       return sessionId
     }
     this.appendDisplayIfMissing(agent.session, event)
@@ -180,7 +183,10 @@ export class DshQQBridge {
 
       const currentText = this.memory.currentMessageText(message) + mediaPrompt(attachments)
       const currentContent: ContentBlock[] = [{ type: 'text', text: currentText }]
-      if (attachments.length && await this.imageRouteAvailable(agent)) {
+      // Always preserve durable image blocks. The updated DSH LLM runtime
+      // projects them to stable placeholders for text-only models and lets
+      // image-capable adapters serialize/resize/upload them natively.
+      if (attachments.length) {
         for (const attachment of attachments) {
           if (attachment.kind === 'image' && attachment.imageRef) {
             currentContent.push({ type: 'image', attachment: attachment.imageRef })
@@ -401,15 +407,6 @@ export class DshQQBridge {
     return options
   }
 
-  private async imageRouteAvailable(agent: AgentHandle['agent']): Promise<boolean> {
-    const route = this.selection(agent)?.current || { provider: agent.options.provider, model: agent.options.model }
-    if (!route.provider || !route.model) return false
-    try {
-      const info = await this.ctx.llm.resolveModelInfo(route.provider, route.model)
-      return info.inputModalities?.includes('image') === true
-    } catch { return false }
-  }
-
   private ensureSelection(agent: AgentHandle['agent']): ModelSelectionRef | undefined {
     const id = String(agent.id)
     const existing = this.selections.get(id)
@@ -598,7 +595,7 @@ export class DshQQBridge {
 function mediaPrompt(attachments: StoredAttachmentSummary[]): string {
   if (!attachments.length) return ''
   const lines = attachments.map(item => `- ${item.kind}: ${item.filename} (attachment_id=${item.id}${item.quoted ? ', 引用消息附件' : ''})`)
-  return `\n\n[QQ 媒体附件]\n${lines.join('\n')}\n图片可使用 qqchat_describe_image 查看。`
+  return `\n\n[QQ 媒体附件]\n${lines.join('\n')}\n图片由 DSH 根据当前模型能力处理；视觉模型可直接理解图片。`
 }
 
 function transcriptContent(event: QQChatDisplayEvent, db: QQChatDatabase): ContentBlock[] {
