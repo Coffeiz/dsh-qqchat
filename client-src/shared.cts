@@ -118,7 +118,7 @@ const css = `
 .qqWideModal{width:min(760px,calc(100vw - 48px));max-height:calc(100vh - 48px);min-height:0;overflow:hidden}.qqModalContent{min-height:0;overflow:auto}.qqModalContent .qqMemoryGrid{min-width:0}.qqModalContent .qqLog{overflow-wrap:anywhere;word-break:break-word}
 `.concat('.qqQuoteSender{margin-top:4px;font-size:10px;color:var(--dsw-alias-label-secondary)}.qqMediaList{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}.qqMediaCard{display:flex;align-items:center;gap:6px;max-width:100%;padding:6px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);font-size:11px}.qqMediaKind{color:var(--dsw-alias-brand-primary);font-weight:650}.qqMediaPreview{width:42px;height:42px;object-fit:cover;border-radius:6px}.qqMediaName{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.qqMediaSize,.qqMediaQuoted{color:var(--dsw-alias-label-secondary)}')
 
-const qqThemeOverrides = '.qqTranscript.out .qqBubble{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}'
+const qqThemeOverrides = '.qqBubble{background:var(--dsw-specific-bubble);color:var(--dsw-alias-label-primary)}.qqTranscript.out .qqBubble{background:var(--dsw-specific-bubble);color:var(--dsw-alias-label-primary)}'
 
 export function installStyles(): () => void {
   if (typeof document === 'undefined' || document.querySelector(`style[data-plugin-css="${STYLE_ID}"]`)) return () => {}
