@@ -6,7 +6,8 @@
 
 <p>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License"></a>
-  <img src="https://img.shields.io/badge/DSH-Plugin-6f42c1.svg" alt="DSH Plugin">
+  <img src="https://img.shields.io/badge/DSH-0.1.1--rc.2-6f42c1.svg" alt="DSH 0.1.1-rc.2">
+  <img src="https://img.shields.io/badge/QQChat-0.2.3-2ea44f.svg" alt="QQChat 0.2.3">
   <img src="https://img.shields.io/badge/TypeScript-5.x-3178c6.svg" alt="TypeScript">
 </p>
 
@@ -17,6 +18,8 @@
 </p>
 
 <p><em>dsh-qqchat 是 DeepSeek Harness（DSH）的 QQ Bot 插件，支持 QQ 群聊、私聊、会话隔离、记忆系统和 DSH 原生命令。</em></p>
+
+<p>当前版本基于 DSH <code>0.1.1-rc.2</code> 验证，安装插件即可使用，无需修改或重新构建 DSH。</p>
 
 > 本项目是一个 Vibe Coding 项目，代码质量和工程完整性可能需要改进。如果你发现问题或有更好的实现建议，欢迎提交 [Issue](https://github.com/Coffeiz/dsh-qqchat/issues) 或 [Pull Request](https://github.com/Coffeiz/dsh-qqchat/pulls)。
 

@@ -2,6 +2,14 @@
 
 本文件记录当前分支相对 `main` 的用户可见变化。内部同步探针、临时文件和实现重排已合并到对应的维护项中。
 
+## 0.2.3 · 2026-08-26
+
+### DSH 兼容性
+
+- 插件启动时自动注册 `qqchat/message` 展示事件，覆盖 CLI、profile 和 persistence 的多份 `dsh-session` 依赖，避免静默群消息导致历史无法恢复。
+- 修正 `--profile <name>` 参数解析，并增加 split-tree 回归 fixture，验证不同依赖副本都能完成注册。
+- 本版本基于 DSH `0.1.1-rc.2` 验证；用户无需修改、patch 或重新构建 DSH。
+
 ## 0.2.2 · 2026-08-21
 
 ### Agent Preset
