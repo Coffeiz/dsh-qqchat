@@ -39,7 +39,11 @@ interface AgentPreset { id: string }
 interface AgentPresetService { resolve(id?: string): Promise<AgentPreset>; list(): Promise<AgentPreset[]>; mount(ctx: Context, id: string): Promise<unknown>; recompose(ctx: Context, id: string): Promise<AgentPreset> }
 interface SessionPersistenceService { inspect(id: SessionId): Promise<{ meta: Session['header']; events: readonly SessionEvent[] }> }
 interface SessionTitleService { get(session: Session): unknown; rename(session: Session, title: string): unknown }
-interface WorkspaceRegistryService { archivedSessionIds: readonly string[] }
+interface WorkspaceEntity { attachSession(sessionId: SessionId): Promise<void> }
+interface WorkspaceRegistryService {
+  archivedSessionIds: readonly string[]
+  create(path: string, title?: string): Promise<WorkspaceEntity>
+}
 interface Composition { presetId?: string; setup?: AgentSetup }
 interface ActiveActor { chatType: ChatType; senderId: string }
 
@@ -62,6 +66,7 @@ export class DshQQBridge {
   private readonly activeAttachments = new Map<string, Set<string>>()
   private readonly activeMediaReadable = new Map<string, boolean>()
   private readonly memorySnapshots = new Map<string, MemorySnapshotState>()
+  private qqWorkspace?: Promise<WorkspaceEntity | undefined>
   private readonly disposeEvent: () => void
   private readonly disposeToolGate: () => void
   private readonly disposeCommands: () => void
@@ -120,6 +125,16 @@ export class DshQQBridge {
   async ensureChatSession(chatType: ChatType, row: GroupRow | MemberRow): Promise<string> {
     const { sessionId } = await this.ensureAgent(chatType, row)
     return sessionId
+  }
+
+  async ensureWorkspaceMembership(): Promise<void> {
+    const sessionIds = [
+      ...this.db.listGroups().map(row => row.dsh_session_id),
+      ...this.db.listDirectChats().map(row => row.dsh_session_id),
+    ]
+    for (const sessionId of sessionIds) {
+      if (sessionId) await this.attachToQQWorkspace(sessionId)
+    }
   }
 
   async recordTranscript(event: QQChatDisplayEvent, row: GroupRow | MemberRow, createSession = false): Promise<string | undefined> {
@@ -291,6 +306,7 @@ export class DshQQBridge {
         this.ensureSelection(live)
         this.ensureTitle(live.session, chatType, row)
         this.rememberRoute(chatType, row, live, sessionId)
+        await this.attachToQQWorkspace(sessionId)
         return { agent: live, sessionId }
       }
       const resumed = await this.tryResume(sessionId)
@@ -298,6 +314,7 @@ export class DshQQBridge {
         this.ensureSelection(resumed.agent)
         this.ensureTitle(resumed.agent.session, chatType, row)
         this.rememberRoute(chatType, row, resumed.agent, sessionId)
+        await this.attachToQQWorkspace(sessionId)
         return { agent: resumed.agent, sessionId }
       }
     }
@@ -317,7 +334,27 @@ export class DshQQBridge {
     this.db.setChatSession(chatType, Number(row.id), sessionId)
     this.ensureTitle(handle.agent.session, chatType, row)
     this.rememberRoute(chatType, row, handle.agent, sessionId)
+    await this.attachToQQWorkspace(sessionId)
     return { agent: handle.agent, sessionId }
+  }
+
+  /** Keep all QQ sessions together in one DSH Workspace using the host API. */
+  private async attachToQQWorkspace(sessionId: string): Promise<void> {
+    const registry = (this.ctx as unknown as { workspaceRegistry?: WorkspaceRegistryService }).workspaceRegistry
+    if (!registry) return
+    if (!this.qqWorkspace) {
+      this.qqWorkspace = registry.create(process.cwd(), 'QQ Chat').catch(error => {
+        this.logger.warn?.(`[dsh-qqchat] QQ Workspace 创建失败，将保留在未分组: ${error instanceof Error ? error.message : String(error)}`)
+        return undefined
+      })
+    }
+    const workspace = await this.qqWorkspace
+    if (!workspace) return
+    try {
+      await workspace.attachSession(SessionId(sessionId))
+    } catch (error) {
+      this.logger.warn?.(`[dsh-qqchat] QQ session ${sessionId} 加入 Workspace 失败，将保留在未分组: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   private isArchived(sessionId: string): boolean {
