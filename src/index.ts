@@ -40,7 +40,10 @@ export function apply(ctx: Context, inputConfig: QQChatConfigInput = {}): void {
 
   ctx.connection.rpc.handle('/qqchat', createQQChatRpc(runtime), { authority: 'loopback' })
   ctx.effect(() => {
-    void runtime.start().catch(error => logger.error?.(error))
+    void (async () => {
+      await bridge.ensureWorkspaceMembership()
+      await runtime.start()
+    })().catch(error => logger.error?.(error))
     return () => runtime.stop()
   }, 'dsh-qqchat runtime')
 }
