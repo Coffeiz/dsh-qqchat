@@ -11,6 +11,13 @@
 
 插件不 fork DSH，也不复制 AgentLoop、Session、工具运行时或主 Conversation。需要扩展 DSH 时，优先使用官方 slot、RPC、Hook 和 policy seam。
 
+## DSH 兼容边界
+
+- 插件必须能够运行在官方发布版 DSH 上；用户安装插件时不应修改、patch、替换或重新构建 DSH。
+- 不得通过修改 DSH 源码、锁文件或私有 API 来补齐插件能力。优先使用官方公开的 API、Slot、RPC、Hook 和类型定义。
+- DSH 不支持的 QQ 展示、媒体和协议能力必须由插件自行适配，并提供明确的降级路径；不能把宿主缺少能力伪装成已支持。
+- 提交前应在未修改的官方 DSH 工作区上完成插件 typecheck、test 和 build 验证。
+
 ## 调试原则
 
 - 先定位真实根因，不用 fallback、吞异常或改宽断言掩盖问题。

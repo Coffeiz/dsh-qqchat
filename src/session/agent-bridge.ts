@@ -128,9 +128,12 @@ export class DshQQBridge {
     const { agent, sessionId } = await this.ensureAgent(event.chatType, row)
     event.sessionId = sessionId
     if (event.isOwner) {
-      const hasImages = event.attachments?.some(attachment => attachment.kind === 'image' && this.db.attachmentById(attachment.id)?.imageRef) === true
-      if (!hasImages || await this.imageRouteAvailable(agent)) this.appendOwnerMessageIfMissing(agent.session, event)
-      else this.appendDisplayIfMissing(agent.session, event)
+      // Keep owner messages as native user/message events even when they carry
+      // images. DSH now owns the image projection: visual routes receive the
+      // durable image block, while text-only routes receive its stable text
+      // placeholder. Falling back to a display-only event here would discard
+      // the owner's message semantics before DSH can apply that policy.
+      this.appendOwnerMessageIfMissing(agent.session, event)
       return sessionId
     }
     this.appendDisplayIfMissing(agent.session, event)
@@ -178,15 +181,7 @@ export class DshQQBridge {
         this.injectMemorySnapshot(agent, sessionId, contextText)
       }
 
-      const currentText = this.memory.currentMessageText(message) + mediaPrompt(attachments)
-      const currentContent: ContentBlock[] = [{ type: 'text', text: currentText }]
-      if (attachments.length && await this.imageRouteAvailable(agent)) {
-        for (const attachment of attachments) {
-          if (attachment.kind === 'image' && attachment.imageRef) {
-            currentContent.push({ type: 'image', attachment: attachment.imageRef })
-          }
-        }
-      }
+      const currentContent = qqMessageContent(this.memory.currentMessageText(message), attachments)
       const current = createUserMessage({
         source: {
           kind: 'qq-chat', botId: String(message.accountId), chatType: message.chatType,
@@ -340,7 +335,11 @@ export class DshQQBridge {
 
   private appendDisplayIfMissing(session: Session, event: QQChatDisplayEvent): void {
     if (session.events.some(item => item.type === 'qqchat/message' && item.data.messageId === event.messageId)) return
-    session.append('qqchat/message', displayEventPayload(event), { ignorable: true })
+    // Keep this on the public Session.append signature. Official DSH releases
+    // do not yet expose the optional ignorable envelope marker; if an older
+    // DSH cannot restore this plugin-only event, ensureAgent falls back to a
+    // fresh Session while SQLite remains the QQ history source of truth.
+    session.append('qqchat/message', displayEventPayload(event))
   }
 
   private appendOwnerMessageIfMissing(session: Session, event: QQChatDisplayEvent): void {
@@ -399,15 +398,6 @@ export class DshQQBridge {
     }
     if (this.config.maxTokens) options.maxTokens = this.config.maxTokens
     return options
-  }
-
-  private async imageRouteAvailable(agent: AgentHandle['agent']): Promise<boolean> {
-    const route = this.selection(agent)?.current || { provider: agent.options.provider, model: agent.options.model }
-    if (!route.provider || !route.model) return false
-    try {
-      const info = await this.ctx.llm.resolveModelInfo(route.provider, route.model)
-      return info.inputModalities?.includes('image') === true
-    } catch { return false }
   }
 
   private ensureSelection(agent: AgentHandle['agent']): ModelSelectionRef | undefined {
@@ -598,7 +588,18 @@ export class DshQQBridge {
 function mediaPrompt(attachments: StoredAttachmentSummary[]): string {
   if (!attachments.length) return ''
   const lines = attachments.map(item => `- ${item.kind}: ${item.filename} (attachment_id=${item.id}${item.quoted ? ', 引用消息附件' : ''})`)
-  return `\n\n[QQ 媒体附件]\n${lines.join('\n')}\n图片可使用 qqchat_describe_image 查看。`
+  return `\n\n[QQ 媒体附件]\n${lines.join('\n')}\n图片由 DSH 根据当前模型能力处理；视觉模型可直接理解图片。`
+}
+
+/** Build the durable DSH content for one QQ turn without pre-flighting the model. */
+export function qqMessageContent(text: string, attachments: readonly StoredAttachmentSummary[]): ContentBlock[] {
+  const content: ContentBlock[] = [{ type: 'text', text: text + mediaPrompt([...attachments]) }]
+  for (const attachment of attachments) {
+    if (attachment.kind === 'image' && attachment.imageRef) {
+      content.push({ type: 'image', attachment: attachment.imageRef })
+    }
+  }
+  return content
 }
 
 function transcriptContent(event: QQChatDisplayEvent, db: QQChatDatabase): ContentBlock[] {
