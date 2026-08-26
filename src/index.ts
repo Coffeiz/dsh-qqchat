@@ -14,7 +14,10 @@ import { QQApiClient } from './gateway/api.js'
 import { QQBindService } from './gateway/auth.js'
 import { createQQChatRpc } from './transport/rpc.js'
 import { QQChatRuntime } from './session/runtime.js'
+import { registerQQChatSessionEventType } from './session/registration.js'
 import type { LoggerLike, QQChatConfigInput } from './types.js'
+
+const qqChatSessionEventRegistrations = await registerQQChatSessionEventType()
 
 export const name = 'dsh-qqchat'
 export const inject = ['connection', 'agents', 'agentDefaultModel', 'commands', 'llm', 'tools', 'workspaceRegistry'] as const
@@ -25,6 +28,9 @@ export function apply(ctx: Context, inputConfig: QQChatConfigInput = {}): void {
   const db = new QQChatDatabase(join(config.dataDir, 'qqchat.sqlite'))
   const baseLogger = (ctx as unknown as { logger?: LoggerLike }).logger || console
   const logger = new QQChatLogger(baseLogger)
+  if (qqChatSessionEventRegistrations === 0) {
+    logger.warn?.('[dsh-qqchat] 未找到可注册的 DSH Session 事件表，旧 QQChat Session 恢复可能需要新建 Session')
+  }
   const api = new QQApiClient(db, config)
   const auth = new QQBindService(db, config)
   const memory = new MemoryEngine(ctx, db, config, logger)

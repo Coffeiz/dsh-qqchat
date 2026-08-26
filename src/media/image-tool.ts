@@ -2,11 +2,11 @@ import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { QQChatDatabase } from '../storage/db.js'
 
-/** Exposes stored QQ images through DSH's durable image-block seam. */
+/** Exposes stored QQ images by attachment ID when a model explicitly requests one. */
 export function registerQQImageTool(ctx: Context, db: QQChatDatabase, isAllowed: (agentId: string, attachmentId: string) => boolean = () => true): () => void {
   const definition = defineTool({
     name: 'qqchat_describe_image',
-    description: '查看 QQ 消息中的图片。传入 QQChat 提供的 attachment_id，可用于 OCR、截图、界面和照片分析。',
+    description: '按 attachment_id 主动重新读取 QQ 消息中的图片。正常图片消息由 DSH 原生视觉输入链路直接处理；本工具用于模型需要再次读取指定图片的场景。',
     parameters: {
       attachment_id: { type: 'string', required: true, description: 'QQChat 图片附件 ID' },
     },

@@ -280,20 +280,21 @@ QQ dispatch
 
 ## 模型输入策略
 
-### 第一阶段：官方兼容模式
+### 兼容与降级路径
 
-默认采用官方 `dsh-qqbot` 的思路：
+当前以 DSH 原生图片输入为主，无法使用原生视觉输入时由 DSH 统一降级：
 
 - 图片、视频、文件先保存为附件；
-- Agent 文本上下文注入媒体类型、名称和附件 ID/受控本地路径；
-- 图片通过 `qqchat_describe_image` 或等价工具分析；
+- Agent 文本上下文保留媒体类型、名称和附件 ID；
+- 图片优先作为 DSH `ImageBlock` 输入；纯文本模型收到 DSH 生成的稳定图片占位文本；
+- `qqchat_describe_image` 仅用于模型主动按 attachment ID 重新读取图片；
 - 视频交给 `ffmpeg` 和文件工具；
 - 文本文件可以直接读取内容；
 - 无能力处理的媒体只提供结构化提示。
 
-优点是对模型要求低，不会改变所有 QQ turn 的模型路由，也不会把大量二进制内容直接塞进上下文缓存。
+优点是沿用 DSH 的统一模型能力判断、图片预算和附件处理，不需要插件复制一套模型适配逻辑。
 
-### 第二阶段：图片原生输入
+### 图片原生输入
 
 当当前模型明确声明支持 image modality 时，可以将图片附件转换为 DSH 官方 `ImageAttachmentRef`，构造 `ImageBlock` 发送给视觉模型。
 
@@ -395,7 +396,7 @@ createUserMessage({
 })
 ```
 
-这样图片由 DSH Web 原生消息渲染，同时可以进入视觉模型。文本模型或附件服务不可用时，必须退回当前的文本提示和 `qqchat_describe_image` 工具路径，不能让整轮消息失败。
+这样图片由 DSH Web 原生消息渲染，同时可以进入视觉模型。文本模型会由 DSH 统一投影为稳定的图片占位文本；`qqchat_describe_image` 仅作为按 attachment_id 主动重新读取图片的工具，不是正常视觉输入的必经路径。
 
 #### 静默消息：最小适配的附件读取 RPC
 
@@ -500,7 +501,7 @@ createUserMessage({
 - [x] 当前模型支持图片时，将 QQ 图片保存为 DSH `ImageAttachmentRef`；
 - [x] 在同一条 DSH `user/message` 中加入文本块和 `ImageBlock`；
 - [x] 让 DSH Web 原生显示 Agent 图片，同时让视觉模型直接接收图片；
-- [x] 当前模型不支持图片时，退回 `qqchat_describe_image` 工具；
+- [x] 当前模型不支持图片时，由 DSH 统一投影为稳定图片占位文本；主动重新读取图片仍可使用 `qqchat_describe_image`；
 - [x] 附件服务不可用、图片损坏或图片超限时，保留文本提示/工具 fallback，不让整轮媒体失败；
 - [x] 保证所有 `ImageBlock` 在 Session event 发布前已经持久提交；
 - [x] 保证 Session event 中不存在 Buffer、Blob、本地路径、SDK 原始对象或循环引用。

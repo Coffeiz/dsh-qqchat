@@ -181,18 +181,7 @@ export class DshQQBridge {
         this.injectMemorySnapshot(agent, sessionId, contextText)
       }
 
-      const currentText = this.memory.currentMessageText(message) + mediaPrompt(attachments)
-      const currentContent: ContentBlock[] = [{ type: 'text', text: currentText }]
-      // Always preserve durable image blocks. The updated DSH LLM runtime
-      // projects them to stable placeholders for text-only models and lets
-      // image-capable adapters serialize/resize/upload them natively.
-      if (attachments.length) {
-        for (const attachment of attachments) {
-          if (attachment.kind === 'image' && attachment.imageRef) {
-            currentContent.push({ type: 'image', attachment: attachment.imageRef })
-          }
-        }
-      }
+      const currentContent = qqMessageContent(this.memory.currentMessageText(message), attachments)
       const current = createUserMessage({
         source: {
           kind: 'qq-chat', botId: String(message.accountId), chatType: message.chatType,
@@ -346,7 +335,11 @@ export class DshQQBridge {
 
   private appendDisplayIfMissing(session: Session, event: QQChatDisplayEvent): void {
     if (session.events.some(item => item.type === 'qqchat/message' && item.data.messageId === event.messageId)) return
-    session.append('qqchat/message', displayEventPayload(event), { ignorable: true })
+    // Keep this on the public Session.append signature. Official DSH releases
+    // do not yet expose the optional ignorable envelope marker; if an older
+    // DSH cannot restore this plugin-only event, ensureAgent falls back to a
+    // fresh Session while SQLite remains the QQ history source of truth.
+    session.append('qqchat/message', displayEventPayload(event))
   }
 
   private appendOwnerMessageIfMissing(session: Session, event: QQChatDisplayEvent): void {
@@ -596,6 +589,17 @@ function mediaPrompt(attachments: StoredAttachmentSummary[]): string {
   if (!attachments.length) return ''
   const lines = attachments.map(item => `- ${item.kind}: ${item.filename} (attachment_id=${item.id}${item.quoted ? ', 引用消息附件' : ''})`)
   return `\n\n[QQ 媒体附件]\n${lines.join('\n')}\n图片由 DSH 根据当前模型能力处理；视觉模型可直接理解图片。`
+}
+
+/** Build the durable DSH content for one QQ turn without pre-flighting the model. */
+export function qqMessageContent(text: string, attachments: readonly StoredAttachmentSummary[]): ContentBlock[] {
+  const content: ContentBlock[] = [{ type: 'text', text: text + mediaPrompt([...attachments]) }]
+  for (const attachment of attachments) {
+    if (attachment.kind === 'image' && attachment.imageRef) {
+      content.push({ type: 'image', attachment: attachment.imageRef })
+    }
+  }
+  return content
 }
 
 function transcriptContent(event: QQChatDisplayEvent, db: QQChatDatabase): ContentBlock[] {

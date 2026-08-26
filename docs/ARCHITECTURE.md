@@ -127,6 +127,11 @@ session.append('qqchat/message', ...)
 - 不会唤醒 Agent；
 - 不会调用 LLM。
 
+官方 DSH 当前不会为 out-of-tree 插件事件提供正式注册 API。QQChat 在插件加载时
+按兼容约定把 `qqchat/message` 注册到可达的 DSH `KNOWN_SESSION_EVENT_TYPES` 副本，
+因此正常安装后旧 Session 可以继续恢复；如果某个特殊打包环境无法解析到宿主使用的
+事件表，QQChat 会捕获恢复失败并创建新的 QQ Session，完整 QQ 历史仍保存在 SQLite。
+
 插件不再从 SQLite 重放整段历史到 DSH Session。DSH Session 保存它实际经历过的 display/Agent events，完整 QQ 世界历史始终由 SQLite 负责。
 
 ## Host / Client
