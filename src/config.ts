@@ -10,10 +10,10 @@ const DEFAULT_CONFIG = Object.freeze({
   groupReadEnabled: true,
   replyFormat: 'smart' as ReplyFormat,
   recentGroupMessages: 40,
-  reflectionIdleMs: 120_000,
+  reflectionIdleMs: 900_000,
   reflectionBatchSize: 20,
   reflectionMaxMessages: 80,
-  memoryMaxTokens: 1400,
+  memoryMaxTokens: 4096,
   memoryCompressionMaxTokens: 15000,
 })
 

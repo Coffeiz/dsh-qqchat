@@ -41,6 +41,7 @@ const MEMBER_DAILY_KEEP_RECENT = 50
 const GROUP_DAILY_COMPACT_AT = 200
 const GROUP_DAILY_KEEP_RECENT = 100
 const MEMBER_BATCH_SIZE = 50
+const REFLECTION_RETRY_COOLDOWN_MS = 60_000
 
 export class MemoryEngine {
   private readonly timers = new Map<number, ReturnType<typeof setTimeout>>()
@@ -51,6 +52,9 @@ export class MemoryEngine {
   private readonly reflectingGroups = new Map<number, Promise<MemoryView>>()
   private readonly reflectingMembers = new Map<number, Promise<MemoryDocuments>>()
   private readonly reflectingMemberBatches = new Map<number, Promise<MemoryView>>()
+  private readonly groupRetryAt = new Map<number, number>()
+  private readonly memberRetryAt = new Map<number, number>()
+  private readonly memberBatchRetryAt = new Map<number, number>()
 
   constructor(
     private readonly ctx: Context,
@@ -69,6 +73,9 @@ export class MemoryEngine {
     this.reflectingGroups.clear()
     this.reflectingMembers.clear()
     this.reflectingMemberBatches.clear()
+    this.groupRetryAt.clear()
+    this.memberRetryAt.clear()
+    this.memberBatchRetryAt.clear()
   }
 
   setRoute(groupId: number, provider: string, model: string, sessionId: string): void {
@@ -86,14 +93,11 @@ export class MemoryEngine {
     if (!this.routes.has(groupId)) return
     const existing = this.timers.get(groupId)
     if (existing) clearTimeout(existing)
-    if (this.db.unreflectedCount(groupId) >= this.config.reflectionBatchSize) {
-      void this.reflectNow(groupId).catch(error => this.logger.warn?.(`[dsh-qqchat] memory reflection: ${errorMessage(error)}`))
-      return
-    }
     const timer = setTimeout(() => {
       this.timers.delete(groupId)
-      void this.reflectNow(groupId).catch(error => this.logger.warn?.(`[dsh-qqchat] memory reflection: ${errorMessage(error)}`))
-    }, this.config.reflectionIdleMs)
+      if (this.inRetryCooldown(this.groupRetryAt, groupId)) this.schedule(groupId)
+      else void this.runScheduledGroupReflection(groupId)
+    }, this.reflectionDelay(this.groupRetryAt, groupId))
     timer.unref?.()
     this.timers.set(groupId, timer)
   }
@@ -103,14 +107,15 @@ export class MemoryEngine {
     if (!this.memberRoutes.has(memberId)) return
     const existing = this.memberTimers.get(memberId)
     if (existing) clearTimeout(existing)
-    if (this.unreflectedDirectMessages(memberId, this.config.reflectionBatchSize).length >= this.config.reflectionBatchSize) {
-      void this.reflectMemberNow(memberId).catch(error => this.logger.warn?.(`[dsh-qqchat] member memory reflection: ${errorMessage(error)}`))
+    if (this.unreflectedDirectMessages(memberId, this.config.reflectionBatchSize).length >= this.config.reflectionBatchSize && !this.inRetryCooldown(this.memberRetryAt, memberId)) {
+      void this.runScheduledMemberReflection(memberId)
       return
     }
     const timer = setTimeout(() => {
       this.memberTimers.delete(memberId)
-      void this.reflectMemberNow(memberId).catch(error => this.logger.warn?.(`[dsh-qqchat] member memory reflection: ${errorMessage(error)}`))
-    }, this.config.reflectionIdleMs)
+      if (this.inRetryCooldown(this.memberRetryAt, memberId)) this.scheduleMember(memberId)
+      else void this.runScheduledMemberReflection(memberId)
+    }, this.reflectionDelay(this.memberRetryAt, memberId))
     timer.unref?.()
     this.memberTimers.set(memberId, timer)
   }
@@ -120,16 +125,60 @@ export class MemoryEngine {
     if (!this.routes.has(groupId)) return
     const existing = this.memberBatchTimers.get(groupId)
     if (existing) clearTimeout(existing)
-    if (this.db.unreflectedMemberCount(groupId) >= MEMBER_BATCH_SIZE) {
-      void this.reflectMembersNow(groupId).catch(error => this.logger.warn?.(`[dsh-qqchat] member batch reflection: ${errorMessage(error)}`))
+    if (this.db.unreflectedMemberCount(groupId) >= MEMBER_BATCH_SIZE && !this.inRetryCooldown(this.memberBatchRetryAt, groupId)) {
+      void this.runScheduledMemberBatchReflection(groupId)
       return
     }
     const timer = setTimeout(() => {
       this.memberBatchTimers.delete(groupId)
-      void this.reflectMembersNow(groupId).catch(error => this.logger.warn?.(`[dsh-qqchat] member batch reflection: ${errorMessage(error)}`))
-    }, this.config.reflectionIdleMs)
+      if (this.inRetryCooldown(this.memberBatchRetryAt, groupId)) this.scheduleGroupMembers(groupId)
+      else void this.runScheduledMemberBatchReflection(groupId)
+    }, this.reflectionDelay(this.memberBatchRetryAt, groupId))
     timer.unref?.()
     this.memberBatchTimers.set(groupId, timer)
+  }
+
+  private inRetryCooldown(retryAt: Map<number, number>, id: number): boolean {
+    const until = retryAt.get(id) || 0
+    if (until <= Date.now()) {
+      retryAt.delete(id)
+      return false
+    }
+    return true
+  }
+
+  private reflectionDelay(retryAt: Map<number, number>, id: number): number {
+    return Math.max(this.config.reflectionIdleMs, (retryAt.get(id) || 0) - Date.now())
+  }
+
+  private async runScheduledGroupReflection(groupId: number): Promise<void> {
+    try {
+      await this.reflectNow(groupId)
+      this.groupRetryAt.delete(groupId)
+    } catch (error) {
+      this.groupRetryAt.set(groupId, Date.now() + REFLECTION_RETRY_COOLDOWN_MS)
+      this.logger.warn?.(`[dsh-qqchat] memory reflection: ${errorMessage(error)}`)
+    }
+  }
+
+  private async runScheduledMemberReflection(memberId: number): Promise<void> {
+    try {
+      await this.reflectMemberNow(memberId)
+      this.memberRetryAt.delete(memberId)
+    } catch (error) {
+      this.memberRetryAt.set(memberId, Date.now() + REFLECTION_RETRY_COOLDOWN_MS)
+      this.logger.warn?.(`[dsh-qqchat] member memory reflection: ${errorMessage(error)}`)
+    }
+  }
+
+  private async runScheduledMemberBatchReflection(groupId: number): Promise<void> {
+    try {
+      await this.reflectMembersNow(groupId)
+      this.memberBatchRetryAt.delete(groupId)
+    } catch (error) {
+      this.memberBatchRetryAt.set(groupId, Date.now() + REFLECTION_RETRY_COOLDOWN_MS)
+      this.logger.warn?.(`[dsh-qqchat] member batch reflection: ${errorMessage(error)}`)
+    }
   }
 
   async reflectNow(groupId: number): Promise<MemoryView> {
@@ -595,8 +644,12 @@ function dateForTimestamp(value: number | null | undefined): string {
 
 export function parseJsonObject(text: string): ReflectionPayload | MemberReflectionPayload {
   const trimmed = String(text || '').trim()
-  const unfenced = trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
-  for (const candidate of [trimmed, unfenced]) {
+  const withoutThinking = trimmed
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/^<thinking>[\s\S]*?<\/thinking>/i, '')
+    .trim()
+  const unfenced = withoutThinking.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+  for (const candidate of [trimmed, withoutThinking, unfenced]) {
     try {
       const parsed = JSON.parse(candidate) as unknown
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as ReflectionPayload | MemberReflectionPayload

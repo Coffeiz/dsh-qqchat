@@ -42,6 +42,11 @@ test('memory reflection parser accepts fenced JSON and surrounding prose', () =>
   assert.equal(parsed.summary, '保留"引号"')
 })
 
+test('memory reflection parser ignores model thinking wrappers', () => {
+  const parsed = parseJsonObject('<think>先分析消息，不要把这段当作结果</think>\n{"summary":"有效结果"}') as { summary: string }
+  assert.equal(parsed.summary, '有效结果')
+})
+
 test('memory reflection parser rejects non-object output', () => {
   assert.throws(() => parseJsonObject('没有 JSON'), /没有返回有效 JSON/)
   assert.throws(() => parseJsonObject('[]'), /没有返回有效 JSON/)
