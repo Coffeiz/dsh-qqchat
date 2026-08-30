@@ -307,6 +307,7 @@ function asSettingsPatch(value: unknown): QQChatRuntimeSettingsPatch {
   if (!record) return {}
   const patch: QQChatRuntimeSettingsPatch = {}
   if (typeof record.memoryEnabled === 'boolean') patch.memoryEnabled = record.memoryEnabled
+  if (typeof record.memoryMemberBatchEnabled === 'boolean') patch.memoryMemberBatchEnabled = record.memoryMemberBatchEnabled
   if (record.groupReceiveMode === 'auto' || record.groupReceiveMode === 'mention' || record.groupReceiveMode === 'silent') {
     patch.groupReceiveMode = record.groupReceiveMode
   }

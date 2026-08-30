@@ -58,6 +58,7 @@ export class QQChatRuntime {
 
   updateSettings(patch: QQChatRuntimeSettingsPatch): QQChatRuntimeSettings {
     if (patch.memoryEnabled !== undefined) this.db.setSetting('memoryEnabled', Boolean(patch.memoryEnabled))
+    if (patch.memoryMemberBatchEnabled !== undefined) this.db.setSetting('memoryMemberBatchEnabled', Boolean(patch.memoryMemberBatchEnabled))
     if (patch.groupReceiveMode !== undefined) {
       if (!isGroupReceiveMode(patch.groupReceiveMode)) throw new Error('无效的群聊接收模式')
       this.db.setSetting('groupReceiveMode', patch.groupReceiveMode)
@@ -120,7 +121,10 @@ export class QQChatRuntime {
       content: text, quotedText: '', mentioned: false, createdAt: Date.now(),
     }, row, true)
     if (this.settings().memoryEnabled) {
-      if (chatType === 'group') this.memory.schedule(Number(row.id))
+      if (chatType === 'group') {
+        this.memory.schedule(Number(row.id))
+        if (settings.memoryMemberBatchEnabled) this.memory.scheduleGroupMembers(Number(row.id))
+      }
       else this.memory.scheduleMember(Number(row.id))
     }
     this.logger.info?.(`[dsh-qqchat] active ${chatType} message sent to ${shortId(targetId)}`)
@@ -241,8 +245,10 @@ export class QQChatRuntime {
       quotedText: message.quotedText, mentioned: message.mentioned, createdAt: Date.now(), attachments: publicAttachments(ownAttachments), quote: safeQuote,
     }
       if (settings.memoryEnabled) {
-        if (group) this.memory.schedule(Number(group.id))
-        else this.memory.scheduleMember(Number(member.id))
+        if (group) {
+          this.memory.schedule(Number(group.id))
+          if (settings.memoryMemberBatchEnabled) this.memory.scheduleGroupMembers(Number(group.id))
+        }
       }
 
     if (!shouldReply) {
@@ -279,7 +285,10 @@ export class QQChatRuntime {
         memberId: message.chatType === 'c2c' ? member.id : undefined, direction: 'outbound', content: reply, mentioned: false,
       })
     if (settings.memoryEnabled) {
-      if (group) this.memory.schedule(Number(group.id))
+      if (group) {
+        this.memory.schedule(Number(group.id))
+        if (settings.memoryMemberBatchEnabled) this.memory.scheduleGroupMembers(Number(group.id))
+      }
       else this.memory.scheduleMember(Number(member.id))
     }
     } catch (error) {

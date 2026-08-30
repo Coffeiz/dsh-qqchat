@@ -50,6 +50,7 @@ export function defaultRuntimeSettings(config: QQChatConfig): QQChatRuntimeSetti
     : config.groupRequiresAt ? 'mention' : 'auto'
   return {
     memoryEnabled: true,
+    memoryMemberBatchEnabled: true,
     groupReceiveMode,
     groupReplyFormat: 'compat',
     directReplyFormat: config.replyFormat,

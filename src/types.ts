@@ -61,6 +61,7 @@ export interface StoredAttachmentSummary {
 
 export interface QQChatRuntimeSettings {
   memoryEnabled: boolean
+  memoryMemberBatchEnabled: boolean
   groupReceiveMode: GroupReceiveMode
   groupReplyFormat: ReplyFormat
   directReplyFormat: ReplyFormat
@@ -73,6 +74,7 @@ export interface QQChatRuntimeSettings {
 
 export interface QQChatRuntimeSettingsPatch {
   memoryEnabled?: boolean
+  memoryMemberBatchEnabled?: boolean
   groupReceiveMode?: GroupReceiveMode
   groupReplyFormat?: ReplyFormat
   directReplyFormat?: ReplyFormat
@@ -419,6 +421,18 @@ export interface ModelRoute {
   sessionId?: string
 }
 
+export type ReflectionScopeType = 'group' | 'member' | 'private'
+export type ReflectionTaskType = 'group' | 'member-batch' | 'private-owner'
+
+export interface ReflectionTaskInput {
+  scopeType: ReflectionScopeType
+  scopeKey: number
+  taskType: ReflectionTaskType
+  startMessageId: number
+  endMessageId: number
+  idempotencyKey: string
+}
+
 export interface PendingReply {
   text: string
   onTextDelta?: (delta: string) => void
@@ -438,6 +452,22 @@ export interface ReflectionMemberUpdate {
   summary?: unknown
   memory?: unknown
   nicknames?: unknown
+}
+
+export interface ReflectionMemberBatchUpdate {
+  senderId?: unknown
+  profile_add?: unknown
+  profile_remove?: unknown
+  pattern_add?: unknown
+  pattern_remove?: unknown
+  summary?: unknown
+  daily?: unknown
+  memory?: unknown
+  nicknames?: unknown
+}
+
+export interface MemberBatchReflectionPayload {
+  members?: ReflectionMemberBatchUpdate[]
 }
 
 export interface ReflectionPayload {

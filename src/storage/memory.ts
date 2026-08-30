@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
+import { readFileSync } from 'node:fs'
 import type { QQChatDatabase } from './db.js'
 import type {
   GroupMemberRow,
@@ -15,6 +16,7 @@ import type {
   QQChatConfig,
   DailyEntry,
   ReflectionPayload,
+  MemberBatchReflectionPayload,
   ProfileEntry,
   ProfileEntryType,
   QQNormalizedMessage,
@@ -23,6 +25,10 @@ import type {
 const DOCS = ['profile', 'summary', 'daily', 'memory', 'pattern'] as const satisfies readonly MemoryDocType[]
 
 interface MemberReflectionPayload {
+  profile_add?: unknown
+  profile_remove?: unknown
+  pattern_add?: unknown
+  pattern_remove?: unknown
   profile?: unknown
   pattern?: unknown
   summary?: unknown
@@ -32,16 +38,19 @@ interface MemberReflectionPayload {
 
 const MEMBER_DAILY_COMPACT_AT = 100
 const MEMBER_DAILY_KEEP_RECENT = 50
-const GROUP_DAILY_COMPACT_AT = 1000
-const GROUP_DAILY_KEEP_RECENT = 500
+const GROUP_DAILY_COMPACT_AT = 200
+const GROUP_DAILY_KEEP_RECENT = 100
+const MEMBER_BATCH_SIZE = 50
 
 export class MemoryEngine {
   private readonly timers = new Map<number, ReturnType<typeof setTimeout>>()
   private readonly memberTimers = new Map<number, ReturnType<typeof setTimeout>>()
+  private readonly memberBatchTimers = new Map<number, ReturnType<typeof setTimeout>>()
   private readonly routes = new Map<number, ModelRoute>()
   private readonly memberRoutes = new Map<number, ModelRoute>()
   private readonly reflectingGroups = new Map<number, Promise<MemoryView>>()
   private readonly reflectingMembers = new Map<number, Promise<MemoryDocuments>>()
+  private readonly reflectingMemberBatches = new Map<number, Promise<MemoryView>>()
 
   constructor(
     private readonly ctx: Context,
@@ -53,10 +62,13 @@ export class MemoryEngine {
   dispose(): void {
     for (const timer of this.timers.values()) clearTimeout(timer)
     for (const timer of this.memberTimers.values()) clearTimeout(timer)
+    for (const timer of this.memberBatchTimers.values()) clearTimeout(timer)
     this.timers.clear()
     this.memberTimers.clear()
+    this.memberBatchTimers.clear()
     this.reflectingGroups.clear()
     this.reflectingMembers.clear()
+    this.reflectingMemberBatches.clear()
   }
 
   setRoute(groupId: number, provider: string, model: string, sessionId: string): void {
@@ -103,6 +115,23 @@ export class MemoryEngine {
     this.memberTimers.set(memberId, timer)
   }
 
+  scheduleGroupMembers(groupId: number): void {
+    groupId = Number(groupId)
+    if (!this.routes.has(groupId)) return
+    const existing = this.memberBatchTimers.get(groupId)
+    if (existing) clearTimeout(existing)
+    if (this.db.unreflectedMemberCount(groupId) >= MEMBER_BATCH_SIZE) {
+      void this.reflectMembersNow(groupId).catch(error => this.logger.warn?.(`[dsh-qqchat] member batch reflection: ${errorMessage(error)}`))
+      return
+    }
+    const timer = setTimeout(() => {
+      this.memberBatchTimers.delete(groupId)
+      void this.reflectMembersNow(groupId).catch(error => this.logger.warn?.(`[dsh-qqchat] member batch reflection: ${errorMessage(error)}`))
+    }, this.config.reflectionIdleMs)
+    timer.unref?.()
+    this.memberBatchTimers.set(groupId, timer)
+  }
+
   async reflectNow(groupId: number): Promise<MemoryView> {
     groupId = Number(groupId)
     const existing = this.reflectingGroups.get(groupId)
@@ -126,21 +155,20 @@ export class MemoryEngine {
       if (!view) throw new Error('群不存在')
       return view
     }
+    const taskKey = `group:${groupId}:${Number(messages[0]?.id)}:${Number(messages.at(-1)?.id)}`
+    if (!this.db.startReflectionTask({
+      scopeType: 'group', scopeKey: groupId, taskType: 'group',
+      startMessageId: Number(messages[0]?.id), endMessageId: Number(messages.at(-1)?.id), idempotencyKey: taskKey,
+    })) {
+      const view = this.memoryView(groupId)
+      if (!view) throw new Error('群不存在')
+      return view
+    }
+    const startedAt = Date.now()
+    try {
 
-    const members = this.db.listGroupMembers(groupId)
-    const currentGroup = this.db.memoryDocs('group', groupId)
-    const memberMemory = Object.fromEntries(
-      members.map(member => [member.platform_user_id, {
-        profile: this.db.memoryDocs('member', Number(member.id)).profile || '',
-        pattern: this.db.memoryDocs('member', Number(member.id)).pattern || '',
-        summary: this.db.memoryDocs('member', Number(member.id)).summary || '',
-        memory: this.db.memoryDocs('member', Number(member.id)).memory || '',
-        name: member.display_name || '',
-        aliases: parseStringList(member.aliases_json),
-        nicknames: parseStringList(member.nicknames_json),
-      }]),
-    )
-    const transcript = messages.map(message => ({
+      const currentGroup = this.db.memoryDocs('group', groupId)
+      const transcript = messages.map(message => ({
       id: Number(message.id),
       at: message.created_at,
       direction: message.direction,
@@ -149,21 +177,103 @@ export class MemoryEngine {
       text: message.content,
       quotedText: message.quoted_text || '',
       ...(parseReflectionQuote(message.quote_json) ? { quote: parseReflectionQuote(message.quote_json) } : {}),
-    }))
+      }))
 
+      const input = {
+        group: { id: group.platform_group_id, name: group.name || '' },
+        existing: { group: pickDocs(currentGroup) },
+        messages: transcript,
+      }
+      const reflected = await this.generateReflection(route, memorySystemPrompt(), input, `qqchat-memory-${groupId}`) as ReflectionPayload
+      this.applyGroupReflection(groupId, reflected)
+      await this.compactDaily('group', groupId, route, GROUP_DAILY_COMPACT_AT, GROUP_DAILY_KEEP_RECENT, `qqchat-group-compress-${groupId}`)
+      const lastMessage = messages.at(-1)
+      if (lastMessage) this.db.markReflected(groupId, Number(lastMessage.id))
+      this.db.finishReflectionTask(taskKey, 'completed')
+      this.logger.info?.(`[dsh-qqchat] memory reflection completed task=group messages=${messages.length} durationMs=${Date.now() - startedAt}`)
+      const view = this.memoryView(groupId)
+      if (!view) throw new Error('群不存在')
+      return view
+    } catch (error) {
+      this.db.finishReflectionTask(taskKey, 'failed')
+      this.logger.warn?.(`[dsh-qqchat] memory reflection failed task=group messages=${messages.length} durationMs=${Date.now() - startedAt}`)
+      throw error
+    }
+  }
+
+  async reflectMembersNow(groupId: number): Promise<MemoryView> {
+    groupId = Number(groupId)
+    const existing = this.reflectingMemberBatches.get(groupId)
+    if (existing) return existing
+    const current = this.reflectMembersNowInternal(groupId)
+    this.reflectingMemberBatches.set(groupId, current)
+    return current.finally(() => {
+      if (this.reflectingMemberBatches.get(groupId) === current) this.reflectingMemberBatches.delete(groupId)
+    })
+  }
+
+  private async reflectMembersNowInternal(groupId: number): Promise<MemoryView> {
+    groupId = Number(groupId)
+    const route = this.routes.get(groupId)
+    if (!route) throw new Error('这个群还没有可复用的 DSH 模型路由；先让 Agent 在群里完成一次回复')
+    const group = this.db.groupById(groupId)
+    if (!group) throw new Error('群不存在')
+    const messages = this.db.unreflectedMemberMessages(groupId, this.config.reflectionMaxMessages)
+    if (messages.length === 0) {
+      const view = this.memoryView(groupId)
+      if (!view) throw new Error('群不存在')
+      return view
+    }
+    const taskKey = `member-batch:${groupId}:${Number(messages[0]?.id)}:${Number(messages.at(-1)?.id)}`
+    if (!this.db.startReflectionTask({
+      scopeType: 'group', scopeKey: groupId, taskType: 'member-batch',
+      startMessageId: Number(messages[0]?.id), endMessageId: Number(messages.at(-1)?.id), idempotencyKey: taskKey,
+    })) {
+      const view = this.memoryView(groupId)
+      if (!view) throw new Error('群不存在')
+      return view
+    }
+    const startedAt = Date.now()
+    try {
+    const senderIds = new Set(messages
+      .filter(message => message.direction !== 'outbound' && message.platform_user_id)
+      .map(message => message.platform_user_id as string))
+    const members = this.db.listGroupMembers(groupId).filter(member => senderIds.has(member.platform_user_id))
     const input = {
       group: { id: group.platform_group_id, name: group.name || '' },
-      existing: { group: pickDocs(currentGroup), members: memberMemory },
-      messages: transcript,
+      members: members.map(member => ({
+        senderId: member.platform_user_id,
+        displayName: member.display_name || '',
+        existing: pickMemberDocs(this.db.memoryDocs('member', Number(member.id))),
+      })),
+      messages: messages.map(message => ({
+        id: Number(message.id),
+        at: message.created_at,
+        direction: message.direction,
+        senderId: message.direction === 'outbound' ? 'BOT' : message.platform_user_id,
+        senderName: message.direction === 'outbound' ? 'DSH Agent' : (message.display_name || ''),
+        text: message.content,
+        quotedText: message.quoted_text || '',
+        ...(parseReflectionQuote(message.quote_json) ? { quote: parseReflectionQuote(message.quote_json) } : {}),
+      })),
     }
-    const reflected = await this.generateReflection(route, memorySystemPrompt(), input, `qqchat-memory-${groupId}`) as ReflectionPayload
-    this.applyReflection(groupId, members, reflected)
-    await this.compactDaily('group', groupId, route, GROUP_DAILY_COMPACT_AT, GROUP_DAILY_KEEP_RECENT, `qqchat-group-compress-${groupId}`)
-    const lastMessage = messages.at(-1)
-    if (lastMessage) this.db.markReflected(groupId, Number(lastMessage.id))
-    const view = this.memoryView(groupId)
-    if (!view) throw new Error('群不存在')
-    return view
+    const reflected = await this.generateReflection(route, memberBatchMemorySystemPrompt(), input, `qqchat-member-batch-${groupId}`)
+    if (!validateMemberBatchPayload(reflected, new Set(members.map(member => member.platform_user_id)))) {
+      throw new Error('成员批量反思输出包含无效成员或格式')
+    }
+      this.applyMemberBatchReflection(groupId, members, reflected, messages.at(-1)?.created_at)
+      const lastMessage = messages.at(-1)
+      if (lastMessage) this.db.markMembersReflected(groupId, Number(lastMessage.id))
+      this.db.finishReflectionTask(taskKey, 'completed')
+      this.logger.info?.(`[dsh-qqchat] memory reflection completed task=member-batch messages=${messages.length} members=${members.length} durationMs=${Date.now() - startedAt}`)
+      const view = this.memoryView(groupId)
+      if (!view) throw new Error('群不存在')
+      return view
+    } catch (error) {
+      this.db.finishReflectionTask(taskKey, 'failed')
+      this.logger.warn?.(`[dsh-qqchat] memory reflection failed task=member-batch messages=${messages.length} durationMs=${Date.now() - startedAt}`)
+      throw error
+    }
   }
 
   async reflectMemberNow(memberId: number): Promise<MemoryDocuments> {
@@ -203,19 +313,37 @@ export class MemoryEngine {
         ...(parseReflectionQuote(message.quote_json) ? { quote: parseReflectionQuote(message.quote_json) } : {}),
       })),
     }
-    const reflected = await this.generateReflection(route, memberMemorySystemPrompt(), input, `qqchat-member-memory-${memberId}`) as MemberReflectionPayload
-    if (reflected.profile !== undefined) this.db.setMemoryDoc('member', memberId, 'profile', stringifyProfile(reflected.profile))
-    if (reflected.pattern !== undefined) this.db.setMemoryDoc('member', memberId, 'pattern', stringifyDoc(reflected.pattern))
-    if (reflected.summary !== undefined) this.db.setMemoryDoc('member', memberId, 'summary', stringifyDoc(reflected.summary))
-    if (reflected.memory !== undefined) this.db.setMemoryDoc('member', memberId, 'memory', stringifyMemory(reflected.memory))
-    if (reflected.daily !== undefined) {
-      const last = messages.at(-1)
-      this.db.appendDailyDoc('member', memberId, dateForTimestamp(last?.created_at), stringifyDoc(reflected.daily))
+    const taskKey = `private-owner:${memberId}:${Number(messages[0]?.id)}:${Number(messages.at(-1)?.id)}`
+    if (!this.db.startReflectionTask({
+      scopeType: 'member', scopeKey: memberId, taskType: 'private-owner',
+      startMessageId: Number(messages[0]?.id), endMessageId: Number(messages.at(-1)?.id), idempotencyKey: taskKey,
+    })) return this.db.memoryDocs('member', memberId)
+    const startedAt = Date.now()
+    try {
+      const reflected = await this.generateReflection(route, privateMemorySystemPrompt(), input, `qqchat-private-memory-${memberId}`) as MemberReflectionPayload
+      if (reflected.profile_add !== undefined || reflected.profile_remove !== undefined) {
+        this.db.setMemoryDoc('member', memberId, 'profile', mergeProfile(this.db.memoryDocs('member', memberId).profile, reflected.profile_add, reflected.profile_remove))
+      } else if (reflected.profile !== undefined) this.db.setMemoryDoc('member', memberId, 'profile', stringifyProfile(reflected.profile))
+      if (reflected.pattern_add !== undefined || reflected.pattern_remove !== undefined) {
+        this.db.setMemoryDoc('member', memberId, 'pattern', mergeTextDoc(this.db.memoryDocs('member', memberId).pattern, reflected.pattern_add, reflected.pattern_remove))
+      } else if (reflected.pattern !== undefined) this.db.setMemoryDoc('member', memberId, 'pattern', stringifyDoc(reflected.pattern))
+      if (reflected.summary !== undefined) this.db.setMemoryDoc('member', memberId, 'summary', stringifyDoc(reflected.summary))
+      if (reflected.memory !== undefined) this.db.setMemoryDoc('member', memberId, 'memory', stringifyMemory(reflected.memory))
+      if (reflected.daily !== undefined) {
+        const last = messages.at(-1)
+        this.db.appendDailyDoc('member', memberId, dateForTimestamp(last?.created_at), stringifyDoc(reflected.daily))
+      }
+      await this.compactDaily('member', memberId, route, MEMBER_DAILY_COMPACT_AT, MEMBER_DAILY_KEEP_RECENT, `qqchat-member-compress-${memberId}`)
+      const lastMessage = messages.at(-1)
+      if (lastMessage) this.db.setSetting(memberCursorKey(memberId), Number(lastMessage.id))
+      this.db.finishReflectionTask(taskKey, 'completed')
+      this.logger.info?.(`[dsh-qqchat] memory reflection completed task=private-owner messages=${messages.length} durationMs=${Date.now() - startedAt}`)
+      return this.db.memoryDocs('member', memberId)
+    } catch (error) {
+      this.db.finishReflectionTask(taskKey, 'failed')
+      this.logger.warn?.(`[dsh-qqchat] memory reflection failed task=private-owner messages=${messages.length} durationMs=${Date.now() - startedAt}`)
+      throw error
     }
-    await this.compactDaily('member', memberId, route, MEMBER_DAILY_COMPACT_AT, MEMBER_DAILY_KEEP_RECENT, `qqchat-member-compress-${memberId}`)
-    const lastMessage = messages.at(-1)
-    if (lastMessage) this.db.setSetting(memberCursorKey(memberId), Number(lastMessage.id))
-    return this.db.memoryDocs('member', memberId)
   }
 
   private async compactDaily(
@@ -280,7 +408,7 @@ export class MemoryEngine {
       .slice(-limit)
   }
 
-  private applyReflection(groupId: number, members: GroupMemberRow[], reflected: ReflectionPayload): void {
+  private applyGroupReflection(groupId: number, reflected: ReflectionPayload): void {
     const group = reflected.group || {}
     if (group.profile !== undefined) this.db.setMemoryDoc('group', groupId, 'profile', stringifyDoc(group.profile))
     if (group.summary !== undefined) this.db.setMemoryDoc('group', groupId, 'summary', stringifyDoc(group.summary))
@@ -289,15 +417,25 @@ export class MemoryEngine {
       const stamp = new Date().toISOString().slice(0, 10)
       this.db.appendDailyDoc('group', groupId, stamp, stringifyDoc(group.daily))
     }
+  }
+
+  private applyMemberBatchReflection(groupId: number, members: GroupMemberRow[], reflected: MemberBatchReflectionPayload, createdAt?: number): void {
     const byOpenid = new Map(members.map(member => [member.platform_user_id, Number(member.id)]))
     const updates = Array.isArray(reflected.members) ? reflected.members : []
     for (const update of updates) {
       const memberId = byOpenid.get(String(update.senderId || ''))
       if (!memberId) continue
-      if (update.profile !== undefined) this.db.setMemoryDoc('member', memberId, 'profile', stringifyProfile(update.profile))
-      if (update.pattern !== undefined) this.db.setMemoryDoc('member', memberId, 'pattern', stringifyDoc(update.pattern))
+      if (update.profile_add !== undefined || update.profile_remove !== undefined) {
+        this.db.setMemoryDoc('member', memberId, 'profile', mergeProfile(this.db.memoryDocs('member', memberId).profile, update.profile_add, update.profile_remove))
+      }
+      if (update.pattern_add !== undefined || update.pattern_remove !== undefined) {
+        this.db.setMemoryDoc('member', memberId, 'pattern', mergeTextDoc(this.db.memoryDocs('member', memberId).pattern, update.pattern_add, update.pattern_remove))
+      }
       if (update.summary !== undefined) this.db.setMemoryDoc('member', memberId, 'summary', stringifyDoc(update.summary))
       if (update.memory !== undefined) this.db.setMemoryDoc('member', memberId, 'memory', stringifyMemory(update.memory))
+      if (update.daily !== undefined && stringifyDoc(update.daily).trim()) {
+        this.db.appendDailyDoc('member', memberId, dateForTimestamp(createdAt), stringifyDoc(update.daily))
+      }
       if (Array.isArray(update.nicknames)) {
         for (const nickname of update.nicknames) {
           if (typeof nickname === 'string') this.db.addGroupMemberNickname(groupId, memberId, nickname)
@@ -378,17 +516,12 @@ export class MemoryEngine {
   }
 }
 
-function memorySystemPrompt(): string {
-  return `你负责整理一个 QQ 群的长期记忆。目标是稳定、克制、可追溯地维护群 scope 与成员 scope，规则：
-1. senderId 是唯一可靠身份，不根据昵称猜身份；不同 senderId 的个人事实绝不能混写。成员记录中的 name/aliases/nicknames 只用于称呼和检索。引用内容属于 quote.senderId；除非 quote.senderId 与当前 senderId 相同，否则不得把引用中的个人事实归给当前发言人。
-2. 群 scope 只写群级角色、关系、共同决定、长期话题、群内约定；个人稳定信息写到对应 member。
-3. 不把一次性寒暄、玩笑、临时情绪上升为长期事实；不确定信息宁可不记。
-4. existing 是已有记忆，应在其基础上更新，而不是无条件推翻。
-5. daily 只写本批消息值得留档的新进展；memory 保留真正长期有用的项目、关系、约定和背景。
-6. 输出严格 JSON，不要 Markdown 代码块、解释或额外文字。
-输出结构：
-{"group":{"profile":{},"summary":"","daily":"","memory":["..."]},"members":[{"senderId":"可靠ID","profile":[{"type":"name|address|pronoun|background|preference|note","text":"...","ts":0}],"pattern":{},"summary":"","memory":"","nicknames":["群内称呼"]}]}
-没有变化的成员可省略；不要为 BOT 创建成员记忆。`
+export function memorySystemPrompt(): string {
+  return loadReflectionPrompt('group-reflection.md')
+}
+
+export function memberBatchMemorySystemPrompt(): string {
+  return loadReflectionPrompt('member-batch-reflection.md')
 }
 
 function memberMemorySystemPrompt(): string {
@@ -399,6 +532,14 @@ function memberMemorySystemPrompt(): string {
 4. existing 是已有记忆，应在其基础上克制更新。
 5. 输出严格 JSON，不要 Markdown 代码块、解释或额外文字。
 输出结构：{"profile":[{"type":"name|address|pronoun|background|preference|note","text":"...","ts":0}],"pattern":{},"summary":"","memory":"","daily":""}`
+}
+
+export function privateMemorySystemPrompt(): string {
+  return loadReflectionPrompt('private-reflection.md')
+}
+
+function loadReflectionPrompt(filename: string): string {
+  return readFileSync(new URL(`../../prompts/${filename}`, import.meta.url), 'utf8').trim()
 }
 
 function parseReflectionQuote(value: string | null): { senderId?: string; senderName?: string; messageId?: string; text: string; attachments: Array<Record<string, unknown>> } | undefined {
@@ -421,12 +562,12 @@ function parseReflectionQuote(value: string | null): { senderId?: string; sender
   }
 }
 
-function groupCompressionSystemPrompt(): string {
-  return `你负责维护 QQ 群长期记忆主档。把近期 daily 记录合并进已有 memory，合并重复、修正矛盾，但保留有价值的历史、日期、事件背景和变化过程；不要因为旧或细而删除历史，不评判、不推测。严格只输出 JSON：{"memory":"更新后的长期记忆全文；不能清空"}`
+export function groupCompressionSystemPrompt(): string {
+  return loadReflectionPrompt('group-compression.md')
 }
 
-function memberCompressionSystemPrompt(): string {
-  return `你负责维护 QQ 成员长期记忆主档。把近期 daily 记录合并进已有 memory，结合 profile 和 pattern，保留有价值的历史、日期、项目背景和变化过程；不要重复抄写 profile/pattern，不评判、不推测，不能清空已有长期记忆。严格只输出 JSON：{"memory":"更新后的长期记忆全文；不能清空"}`
+export function memberCompressionSystemPrompt(): string {
+  return loadReflectionPrompt('member-compression.md')
 }
 
 function renderDailyEntries(entries: DailyEntry[]): string {
@@ -496,6 +637,20 @@ export function parseJsonObject(text: string): ReflectionPayload | MemberReflect
   throw new Error('记忆反思模型没有返回有效 JSON')
 }
 
+export function validateMemberBatchPayload(value: unknown, allowedSenderIds: ReadonlySet<string>): value is MemberBatchReflectionPayload {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const members = (value as { members?: unknown }).members
+  if (!Array.isArray(members)) return false
+  const seen = new Set<string>()
+  return members.every(item => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return false
+    const senderId = (item as { senderId?: unknown }).senderId
+    if (typeof senderId !== 'string' || !allowedSenderIds.has(senderId) || seen.has(senderId)) return false
+    seen.add(senderId)
+    return true
+  })
+}
+
 function stringifyDoc(value: unknown): string {
   if (typeof value === 'string') return value
   return JSON.stringify(value, null, 2) ?? ''
@@ -504,6 +659,35 @@ function stringifyDoc(value: unknown): string {
 function stringifyProfile(value: unknown): string {
   const entries = normalizeProfileEntries(value)
   return JSON.stringify(entries, null, 2)
+}
+
+function mergeProfile(existing: string | undefined, additions: unknown, removals: unknown): string {
+  const current = normalizeProfileEntries(existing || '')
+  const removeTexts = new Set(normalizeProfileEntries(removals).map(entry => entry.text))
+  const additionsList = normalizeProfileEntries(additions).filter(entry => !removeTexts.has(entry.text))
+  const merged = [...current.filter(entry => !removeTexts.has(entry.text)), ...additionsList]
+  const unique = merged.filter((entry, index, all) => all.findIndex(item => item.type === entry.type && item.text === entry.text) === index)
+  return JSON.stringify(unique, null, 2)
+}
+
+function mergeTextDoc(existing: string | undefined, additions: unknown, removals: unknown): string {
+  const remove = new Set(normalizeTextList(removals))
+  const lines = String(existing || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean).filter(line => !remove.has(line))
+  const added = normalizeTextList(additions).filter(line => !lines.includes(line) && !remove.has(line))
+  return [...lines, ...added].join('\n')
+}
+
+function normalizeTextList(value: unknown): string[] {
+  if (typeof value === 'string') return value.trim() ? [value.trim()] : []
+  if (!Array.isArray(value)) return []
+  return value.flatMap(item => {
+    if (typeof item === 'string') return item.trim() ? [item.trim()] : []
+    if (item && typeof item === 'object') {
+      const text = (item as Record<string, unknown>).text
+      return typeof text === 'string' && text.trim() ? [text.trim()] : []
+    }
+    return []
+  })
 }
 
 function normalizeProfileEntries(value: unknown): ProfileEntry[] {

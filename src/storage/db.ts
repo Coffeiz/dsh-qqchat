@@ -27,9 +27,11 @@ import type {
   QQQuoteIndexRow,
   QQQuoteInput,
   StoredAttachmentSummary,
+  ReflectionTaskInput,
 } from '../types.js'
 
 const now = (): number => Date.now()
+const REFLECTION_TASK_STALE_MS = 15 * 60 * 1000
 
 function parseStringList(value: string | null | undefined): string[] {
   if (!value) return []
@@ -233,8 +235,23 @@ export class QQChatDatabase {
       CREATE TABLE IF NOT EXISTS reflection_state (
         group_id INTEGER PRIMARY KEY REFERENCES groups(id) ON DELETE CASCADE,
         last_message_id INTEGER NOT NULL DEFAULT 0,
+        last_member_reflected_message_id INTEGER NOT NULL DEFAULT 0,
         last_reflected_at INTEGER
       );
+      CREATE TABLE IF NOT EXISTS reflection_tasks (
+        id INTEGER PRIMARY KEY,
+        scope_type TEXT NOT NULL CHECK(scope_type IN ('group','member','private')),
+        scope_key INTEGER NOT NULL,
+        task_type TEXT NOT NULL CHECK(task_type IN ('group','member-batch','private-owner')),
+        start_message_id INTEGER NOT NULL,
+        end_message_id INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('running','completed','failed')),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS reflection_tasks_scope ON reflection_tasks(scope_type, scope_key, task_type, status);
       CREATE TABLE IF NOT EXISTS outbox (
         id INTEGER PRIMARY KEY,
         account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -247,6 +264,8 @@ export class QQChatDatabase {
         error TEXT
       );
     `)
+    this.db.prepare("UPDATE reflection_tasks SET status='failed',updated_at=? WHERE status='running' AND updated_at<?")
+      .run(now(), now() - REFLECTION_TASK_STALE_MS)
     const columns = new Set(many<{ name: string }>(this.db.prepare('PRAGMA table_info(group_members)').all()).map(column => column.name))
     const groupColumns = new Set(many<{ name: string }>(this.db.prepare('PRAGMA table_info(groups)').all()).map(column => column.name))
     if (groupColumns.has('requires_at')) this.db.exec('ALTER TABLE groups DROP COLUMN requires_at')
@@ -254,6 +273,10 @@ export class QQChatDatabase {
     if (!columns.has('nicknames_json')) this.db.exec("ALTER TABLE group_members ADD COLUMN nicknames_json TEXT NOT NULL DEFAULT '[]'")
     if (!columns.has('message_count')) this.db.exec('ALTER TABLE group_members ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0')
     const messageColumns = new Set(many<{ name: string }>(this.db.prepare('PRAGMA table_info(messages)').all()).map(column => column.name))
+    const reflectionColumns = new Set(many<{ name: string }>(this.db.prepare('PRAGMA table_info(reflection_state)').all()).map(column => column.name))
+    if (!reflectionColumns.has('last_member_reflected_message_id')) {
+      this.db.exec('ALTER TABLE reflection_state ADD COLUMN last_member_reflected_message_id INTEGER NOT NULL DEFAULT 0')
+    }
     if (!messageColumns.has('attachments_json')) this.db.exec('ALTER TABLE messages ADD COLUMN attachments_json TEXT')
     if (!messageColumns.has('quote_json')) this.db.exec('ALTER TABLE messages ADD COLUMN quote_json TEXT')
     this.db.exec(`UPDATE group_members SET message_count=(
@@ -375,6 +398,7 @@ export class QQChatDatabase {
   runtimeSettings(defaults: QQChatRuntimeSettings): QQChatRuntimeSettings {
     return {
       memoryEnabled: this.getSetting('memoryEnabled', defaults.memoryEnabled),
+      memoryMemberBatchEnabled: this.getSetting('memoryMemberBatchEnabled', defaults.memoryMemberBatchEnabled),
       groupReceiveMode: this.getSetting('groupReceiveMode', defaults.groupReceiveMode),
       groupReplyFormat: this.getSetting('groupReplyFormat', defaults.groupReplyFormat),
       directReplyFormat: this.getSetting('directReplyFormat', this.getSetting('replyFormat', defaults.directReplyFormat)),
@@ -690,10 +714,56 @@ export class QQChatDatabase {
     return Number(row?.n || 0)
   }
 
+  unreflectedMemberMessages(groupId: number, limit = 80): MessageRow[] {
+    const state = one<{ last_member_reflected_message_id: number }>(this.db.prepare(
+      'SELECT last_member_reflected_message_id FROM reflection_state WHERE group_id=?',
+    ).get(groupId))
+    const after = Number(state?.last_member_reflected_message_id || 0)
+    return many<MessageRow>(this.db.prepare(`SELECT m.*,mem.platform_user_id,mem.display_name
+      FROM messages m LEFT JOIN members mem ON mem.id=m.member_id
+      WHERE m.group_id=? AND m.id>? ORDER BY m.id ASC LIMIT ?`).all(groupId, after, limit))
+  }
+
+  unreflectedMemberCount(groupId: number): number {
+    const state = one<{ last_member_reflected_message_id: number }>(this.db.prepare(
+      'SELECT last_member_reflected_message_id FROM reflection_state WHERE group_id=?',
+    ).get(groupId))
+    const row = one<{ n: number }>(this.db.prepare(
+      'SELECT COUNT(*) AS n FROM messages WHERE group_id=? AND id>?',
+    ).get(groupId, Number(state?.last_member_reflected_message_id || 0)))
+    return Number(row?.n || 0)
+  }
+
   markReflected(groupId: number, messageId: number): void {
     this.db.prepare(`INSERT INTO reflection_state(group_id,last_message_id,last_reflected_at) VALUES(?,?,?)
       ON CONFLICT(group_id) DO UPDATE SET last_message_id=excluded.last_message_id,last_reflected_at=excluded.last_reflected_at`)
       .run(groupId, messageId, now())
+  }
+
+  markMembersReflected(groupId: number, messageId: number): void {
+    this.db.prepare(`INSERT INTO reflection_state(group_id,last_message_id,last_member_reflected_message_id,last_reflected_at) VALUES(?,?,?,?)
+      ON CONFLICT(group_id) DO UPDATE SET last_member_reflected_message_id=excluded.last_member_reflected_message_id,last_reflected_at=excluded.last_reflected_at`)
+      .run(groupId, 0, messageId, now())
+  }
+
+  startReflectionTask(input: ReflectionTaskInput): boolean {
+    const existing = one<{ id: number; status: string }>(this.db.prepare(
+      'SELECT id,status FROM reflection_tasks WHERE idempotency_key=?',
+    ).get(input.idempotencyKey))
+    if (existing?.status === 'completed' || existing?.status === 'running') return false
+    if (existing) {
+      this.db.prepare(`UPDATE reflection_tasks SET status='running',attempts=attempts+1,updated_at=? WHERE id=?`)
+        .run(now(), existing.id)
+      return true
+    }
+    this.db.prepare(`INSERT INTO reflection_tasks(scope_type,scope_key,task_type,start_message_id,end_message_id,status,attempts,idempotency_key,created_at,updated_at)
+      VALUES(?,?,?,?,?,'running',1,?,?,?)`)
+      .run(input.scopeType, input.scopeKey, input.taskType, input.startMessageId, input.endMessageId, input.idempotencyKey, now(), now())
+    return true
+  }
+
+  finishReflectionTask(idempotencyKey: string, status: 'completed' | 'failed'): void {
+    this.db.prepare('UPDATE reflection_tasks SET status=?,updated_at=? WHERE idempotency_key=?').run(status, now(), idempotencyKey)
   }
 
   memoryDocs(scopeType: MemoryScopeType, scopeKey: number): MemoryDocuments {

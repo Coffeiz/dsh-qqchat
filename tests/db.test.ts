@@ -49,6 +49,37 @@ test('daily entries share one heading per date', () => withDb(db => {
   assert.match(daily, /- 第一条\n- 第二条/)
 }))
 
+test('group reflection and member batch keep independent cursors', () => withDb(db => {
+  const account = db.upsertAccount('app-cursors', 'secret-cursors')
+  const group = db.upsertGroup(Number(account.id), 'group-cursors')
+  const member = db.upsertMember(Number(account.id), 'user-cursors', 'Cursor User')
+  db.insertMessage({ accountId: Number(account.id), chatType: 'group', groupId: Number(group.id), memberId: Number(member.id), direction: 'inbound', content: 'one' })
+  const second = db.insertMessage({ accountId: Number(account.id), chatType: 'group', groupId: Number(group.id), memberId: Number(member.id), direction: 'inbound', content: 'two' })
+  db.markReflected(Number(group.id), second)
+  assert.equal(db.unreflectedMessages(Number(group.id)).length, 0)
+  assert.equal(db.unreflectedMemberMessages(Number(group.id)).length, 2)
+  db.markMembersReflected(Number(group.id), second)
+  assert.equal(db.unreflectedMemberMessages(Number(group.id)).length, 0)
+  assert.equal(db.unreflectedMemberCount(Number(group.id)), 0)
+}))
+
+test('reflection task ledger is idempotent and failed ranges can retry', () => withDb(db => {
+  const task = {
+    scopeType: 'group' as const,
+    scopeKey: 7,
+    taskType: 'member-batch' as const,
+    startMessageId: 10,
+    endMessageId: 59,
+    idempotencyKey: 'member-batch:7:10:59',
+  }
+  assert.equal(db.startReflectionTask(task), true)
+  assert.equal(db.startReflectionTask(task), false)
+  db.finishReflectionTask(task.idempotencyKey, 'failed')
+  assert.equal(db.startReflectionTask(task), true)
+  db.finishReflectionTask(task.idempotencyKey, 'completed')
+  assert.equal(db.startReflectionTask(task), false)
+}))
+
 test('memory documents preserve separate group and member scopes', () => withDb(db => {
   const account = db.upsertAccount('app-2', 'secret-2')
   const group = db.upsertGroup(Number(account.id), 'group-2')
@@ -62,6 +93,7 @@ test('memory documents preserve separate group and member scopes', () => withDb(
 test('runtime settings persist independently from static config defaults', () => withDb(db => {
   const defaults = {
     memoryEnabled: true,
+    memoryMemberBatchEnabled: true,
     groupReceiveMode: 'mention' as const,
     groupReplyFormat: 'smart' as const,
     directReplyFormat: 'smart' as const,
@@ -80,8 +112,10 @@ test('runtime settings persist independently from static config defaults', () =>
   db.setSetting('groupMembersCanReadMedia', true)
   db.setSetting('ownerUserId', 'owner-openid')
   db.setSetting('memoryEnabled', false)
+  db.setSetting('memoryMemberBatchEnabled', false)
   assert.deepEqual(db.runtimeSettings(defaults), {
     memoryEnabled: false,
+    memoryMemberBatchEnabled: false,
     groupReceiveMode: 'silent',
     groupReplyFormat: 'compat',
     directReplyFormat: 'smart',
@@ -208,6 +242,69 @@ test('legacy groups migration removes requires_at without losing group state', (
       assert.equal(columns.some(column => column.name === 'requires_at'), false)
     } finally {
       check.close()
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('legacy reflection state migrates the member batch cursor without changing the group cursor', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-qqchat-reflection-state-'))
+  const path = join(dir, 'qqchat.sqlite')
+  const legacy = new DatabaseSync(path)
+  legacy.exec(`
+    CREATE TABLE reflection_state (
+      group_id INTEGER PRIMARY KEY,
+      last_message_id INTEGER NOT NULL DEFAULT 0,
+      last_reflected_at INTEGER
+    );
+    INSERT INTO reflection_state(group_id,last_message_id,last_reflected_at) VALUES(7,42,100);
+  `)
+  legacy.close()
+  try {
+    const db = new QQChatDatabase(path)
+    try {
+      db.markMembersReflected(7, 55)
+      assert.equal(db.unreflectedMemberCount(7), 0)
+    } finally {
+      db.close()
+    }
+    const check = new DatabaseSync(path)
+    try {
+      const columns = check.prepare('PRAGMA table_info(reflection_state)').all() as Array<{ name: string }>
+      assert.equal(columns.some(column => column.name === 'last_member_reflected_message_id'), true)
+      const row = check.prepare('SELECT last_message_id,last_member_reflected_message_id FROM reflection_state WHERE group_id=7').get() as { last_message_id: number; last_member_reflected_message_id: number }
+      assert.equal(row.last_message_id, 42)
+      assert.equal(row.last_member_reflected_message_id, 55)
+    } finally {
+      check.close()
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('stale running reflection tasks become retryable after database recovery', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-qqchat-reflection-task-recovery-'))
+  const path = join(dir, 'qqchat.sqlite')
+  const legacy = new DatabaseSync(path)
+  legacy.exec(`
+    CREATE TABLE reflection_tasks (
+      id INTEGER PRIMARY KEY, scope_type TEXT NOT NULL, scope_key INTEGER NOT NULL,
+      task_type TEXT NOT NULL, start_message_id INTEGER NOT NULL, end_message_id INTEGER NOT NULL,
+      status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 1, idempotency_key TEXT NOT NULL UNIQUE,
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
+    INSERT INTO reflection_tasks(scope_type,scope_key,task_type,start_message_id,end_message_id,status,idempotency_key,created_at,updated_at)
+      VALUES('group',7,'group',1,20,'running','stale-task',1,1);
+  `)
+  legacy.close()
+  try {
+    const db = new QQChatDatabase(path)
+    try {
+      assert.equal(db.startReflectionTask({ scopeType: 'group', scopeKey: 7, taskType: 'group', startMessageId: 1, endMessageId: 20, idempotencyKey: 'stale-task' }), true)
+    } finally {
+      db.close()
     }
   } finally {
     rmSync(dir, { recursive: true, force: true })
