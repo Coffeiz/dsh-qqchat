@@ -25,6 +25,7 @@ export function QQSettings({ rpc }: { rpc: Rpc }) {
   const [groupReplyMenuOpen, setGroupReplyMenuOpen] = useState(false)
   const [directReplyMenuOpen, setDirectReplyMenuOpen] = useState(false)
   const [ownerMenuOpen, setOwnerMenuOpen] = useState(false)
+  const [receiveHelpOpen, setReceiveHelpOpen] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -168,11 +169,27 @@ export function QQSettings({ rpc }: { rpc: Rpc }) {
       variant: settings.groupReceiveMode === mode ? 'primary' : 'outline',
       onClick: () => void patch({ groupReceiveMode: mode }),
     }, mode === 'auto' ? '自动回应' : mode === 'mention' ? '@回复' : '静默记录')))
+  const receiveHelp = h(Menu, {
+    open: receiveHelpOpen,
+    onClose: () => setReceiveHelpOpen(false),
+    onSelect: () => undefined,
+    portal: true,
+    align: 'end',
+    items: [
+      { type: 'label', id: 'receive-help-title', text: '开启全量消息接收' },
+      { type: 'label', id: 'receive-help-step-1', text: '1. 手机端 QQ 打开机器人所在的群' },
+      { type: 'label', id: 'receive-help-step-2', text: '2. 点击机器人的头像进入资料页' },
+      { type: 'label', id: 'receive-help-step-3', text: '3. 点击右上角「设置」' },
+      { type: 'label', id: 'receive-help-step-4', text: '4. 打开「全量消息接收」' },
+    ],
+    footer: [{ type: 'label', id: 'receive-help-note', text: '未开启时只能收到 @ 消息，非 @ 消息不会进入会话记录' }],
+    anchor: h(Button, { size: 'sm', variant: 'outline', onClick: () => setReceiveHelpOpen(!receiveHelpOpen) }, '设置方法'),
+  })
 
   const receiveGroup = h('div', { className: 'qqSettingsGroup' },
     h('h3', null, '消息接收'),
     h('div', { className: 'qqSetting' },
-      h('div', null, h('div', { className: 'qqSettingTitle' }, '群聊接收方式'), h('div', { className: 'qqSettingHelp' }, '自动回应：每条群消息都会触发 Agent；@回复：所有消息都记录，但只有 @Bot 才唤醒 Agent；静默记录：只记录群聊与记忆，不主动回应。')),
+      h('div', null, h('div', { className: 'qqSettingTitle' }, '群聊接收方式'), h('div', { className: 'qqSettingHelp qqHelpRow' }, '自动回应：每条群消息都会触发 Agent；@回复：所有消息都记录，但只有 @Bot 才唤醒 Agent；静默记录：只记录群聊与记忆，不主动回应。', receiveHelp)),
       h('div', { className: 'qqControl' }, receiveButtons)),
     h('div', { className: 'qqSetting' },
       h('div', null, h('div', { className: 'qqSettingTitle' }, '群聊消息兼容格式'), h('div', { className: 'qqSettingHelp' }, '仅控制发送到 QQ 群聊时使用的消息格式。')),

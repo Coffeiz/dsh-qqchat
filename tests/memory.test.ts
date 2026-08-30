@@ -14,6 +14,7 @@ import {
   parseJsonObject,
   privateMemorySystemPrompt,
   validateMemberBatchPayload,
+  MEMORY_INJECT_CHARS,
 } from '../src/storage/memory.js'
 
 test('memory reflection prompts preserve Gugu-style scope and evidence boundaries', () => {
@@ -50,6 +51,46 @@ test('memory reflection parser ignores model thinking wrappers', () => {
 test('memory reflection parser rejects non-object output', () => {
   assert.throws(() => parseJsonObject('没有 JSON'), /没有返回有效 JSON/)
   assert.throws(() => parseJsonObject('[]'), /没有返回有效 JSON/)
+})
+
+test('memory context follows Gugu-style per-scope injection budgets', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-qqchat-memory-context-'))
+  const db = new QQChatDatabase(join(dir, 'qqchat.sqlite'))
+  try {
+    const account = db.upsertAccount('app-memory-context', 'secret-memory-context')
+    const group = db.upsertGroup(Number(account.id), 'group-memory-context')
+    const member = db.upsertMember(Number(account.id), 'user-memory-context', 'Context User')
+    const engine = new MemoryEngine({} as never, db, resolveConfig())
+
+    db.setMemoryDoc('group', Number(group.id), 'profile', 'G'.repeat(2500))
+    db.setMemoryDoc('group', Number(group.id), 'daily', 'old-group-' + 'D'.repeat(2500))
+    db.setMemoryDoc('member', Number(member.id), 'profile', 'M'.repeat(2500))
+    db.setMemoryDoc('member', Number(member.id), 'daily', 'old-member-' + 'E'.repeat(2500))
+
+    const groupContext = engine.contextForGroup(group, {
+      id: Number(member.id),
+      platform_user_id: 'user-memory-context',
+      display_name: 'Context User',
+    })
+    const groupScope = groupContext.slice(groupContext.indexOf('[群画像]'), groupContext.indexOf('当前成员ID='))
+    const memberScope = groupContext.slice(groupContext.indexOf('[当前成员画像]'))
+    assert.ok(groupScope.length <= MEMORY_INJECT_CHARS + 20)
+    assert.ok(memberScope.length <= MEMORY_INJECT_CHARS + 30)
+
+    db.setMemoryDoc('member', Number(member.id), 'profile', '')
+    db.setMemoryDoc('member', Number(member.id), 'daily', 'old-' + 'X'.repeat(2500) + '-latest-member')
+    const privateContext = engine.contextForMember({ id: Number(member.id), platform_user_id: 'user-memory-context', display_name: 'Context User' })
+    const dailyStart = privateContext.indexOf('[成员近期沉淀]')
+    const dailyEnd = privateContext.indexOf('[成员长期记忆]')
+    const daily = privateContext.slice(dailyStart, dailyEnd < 0 ? undefined : dailyEnd)
+    assert.ok(daily.length > 0)
+    assert.match(daily, /latest-member/)
+    assert.ok(!daily.includes('old-'))
+    engine.dispose()
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('member batch output accepts only unique members from the current message scope', () => {

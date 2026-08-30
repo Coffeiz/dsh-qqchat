@@ -42,6 +42,8 @@ const GROUP_DAILY_COMPACT_AT = 200
 const GROUP_DAILY_KEEP_RECENT = 100
 const MEMBER_BATCH_SIZE = 50
 const REFLECTION_RETRY_COOLDOWN_MS = 60_000
+/** 与咕咕一致：每个记忆 scope 的本轮直注入预算（按字符计）。 */
+export const MEMORY_INJECT_CHARS = 2_000
 
 export class MemoryEngine {
   private readonly timers = new Map<number, ReturnType<typeof setTimeout>>()
@@ -499,20 +501,26 @@ export class MemoryEngine {
   ): string {
     const groupDocs = this.db.memoryDocs('group', Number(group.id))
     const memberDocs = currentMember ? this.db.memoryDocs('member', Number(currentMember.id)) : {}
+    const groupMemory = boundedMemorySections([
+      ['群画像', groupDocs.profile],
+      ['群摘要', groupDocs.summary],
+      ['群长期记忆', groupDocs.memory],
+      ['群最近沉淀', groupDocs.daily],
+    ])
+    const memberMemory = currentMember ? boundedMemorySections([
+      ['当前成员画像', memberDocs.profile],
+      ['当前成员模式', memberDocs.pattern],
+      ['当前成员摘要', memberDocs.summary],
+      ['当前成员长期记忆', memberDocs.memory],
+    ]) : []
     return [
       '[QQ 群聊上下文快照]',
       '以下 sender ID / group ID 是可靠平台元数据。不要根据昵称猜身份，不要把其他群成员的兴趣、关系或记忆归到当前发言人。',
       `群ID=${group.platform_group_id}`,
       group.name ? `群名=${group.name}` : '',
-      section('群画像', groupDocs.profile),
-      section('群摘要', groupDocs.summary),
-      section('群长期记忆', groupDocs.memory),
-      section('群最近沉淀', groupDocs.daily),
+      ...groupMemory,
       currentMember ? `当前成员ID=${currentMember.platform_user_id}\n当前成员显示名=${currentMember.display_name || ''}` : '',
-      section('当前成员画像', memberDocs.profile),
-      section('当前成员模式', memberDocs.pattern),
-      section('当前成员摘要', memberDocs.summary),
-      section('当前成员长期记忆', memberDocs.memory),
+      ...memberMemory,
     ].filter(Boolean).join('\n')
   }
 
@@ -523,11 +531,13 @@ export class MemoryEngine {
       `成员ID=${member.platform_user_id}`,
       `显示名=${member.display_name || ''}`,
       '成员ID 是可靠平台身份；昵称仅供展示。',
-      section('成员画像', docs.profile),
-      section('行为模式', docs.pattern),
-      section('成员摘要', docs.summary),
-      section('成员近期沉淀', docs.daily),
-      section('成员长期记忆', docs.memory),
+      ...boundedMemorySections([
+        ['成员画像', docs.profile],
+        ['行为模式', docs.pattern],
+        ['成员摘要', docs.summary],
+        ['成员近期沉淀', docs.daily],
+        ['成员长期记忆', docs.memory],
+      ]),
     ].filter(Boolean).join('\n')
   }
 
@@ -809,8 +819,20 @@ function memberCursorKey(memberId: number): string {
   return `memberReflection:${memberId}`
 }
 
-function section(title: string, content: string | undefined): string {
-  return content ? `[${title}]\n${content}` : ''
+function boundedMemorySections(parts: Array<[title: string, content: string | undefined]>, budget = MEMORY_INJECT_CHARS): string[] {
+  let used = 0
+  const output: string[] = []
+  for (const [title, content] of parts) {
+    const value = content?.trim() || ''
+    if (!value || used >= budget) continue
+    const remaining = budget - used
+    const isRecent = title.includes('近期沉淀') || title.includes('最近沉淀')
+    const bounded = (isRecent ? value.slice(-remaining) : value.slice(0, remaining)).trim()
+    if (!bounded) continue
+    output.push(`[${title}]\n${bounded}`)
+    used += bounded.length
+  }
+  return output
 }
 
 function errorMessage(error: unknown): string {

@@ -12,7 +12,7 @@ export interface MemorySnapshotEvent {
   type?: string
   time?: number
   data?: {
-    source?: { kind?: string; plugin?: string }
+    source?: { kind?: string; plugin?: string; sections?: readonly { name?: string; text?: string }[] }
     content?: readonly { type?: string; text?: string }[]
   }
 }
@@ -32,8 +32,11 @@ export function restoreMemorySnapshotState(events: readonly MemorySnapshotEvent[
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index]
     if (!event) continue
-    if (event.type !== 'user/message' || event.data?.source?.kind !== 'plugin' || event.data.source.plugin !== sourcePlugin) continue
-    const block = event.data.content?.length === 1 ? event.data.content[0] : undefined
+    const source = event.data?.source
+    if (event.type !== 'user/message' || source?.kind !== 'plugin' || source.plugin !== sourcePlugin) continue
+    if (!source.sections?.some(section => section.name === 'qq-chat-context')) continue
+    const content = event.data?.content
+    const block = content?.length === 1 ? content[0] : undefined
     if (block?.type !== 'text' || typeof block.text !== 'string') continue
     return { hash: memorySnapshotHash(block.text), lastInjectedAt: Number(event.time) || 0, stale: lastCompactionAt > (Number(event.time) || 0) }
   }

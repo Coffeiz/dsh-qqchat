@@ -93,6 +93,8 @@ task:  group | member-batch | private-owner
 `@deepseek-ai/dsh-system-prompt` 来源标记。注入策略遵循“新 Session、TTL
 过期、Session compact 后刷新”的生命周期规则，连续对话只刷新对应群或当前
 成员的 TTL，不重复注入完整记忆。群持续活跃不会替潜水成员刷新成员 TTL。
+每个记忆 scope 的直注入预算为 2000 个字符，daily 优先保留最新内容；超出
+部分仍保存在 SQLite，不会因上下文裁剪而删除。
 具体状态、hash、版本和失败处理见[记忆系统上下文注入方案](./MEMORY_CONTEXT.md)。
 当前 QQ 消息仍作为正常 user prompt 进入 turn。
 

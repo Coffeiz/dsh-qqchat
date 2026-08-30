@@ -18,9 +18,18 @@ test('memory snapshot refreshes after TTL, content changes, or compact', () => {
 
 test('restored snapshot becomes stale when compaction ended after it', () => {
   const state = restoreMemorySnapshotState([
-    { type: 'user/message', time: 100, data: { source: { kind: 'plugin', plugin: 'runtime' }, content: [{ type: 'text', text: 'snapshot' }] } },
+    { type: 'user/message', time: 100, data: { source: { kind: 'plugin', plugin: 'runtime', sections: [{ name: 'qq-chat-context' }] }, content: [{ type: 'text', text: 'snapshot' }] } },
     { type: 'compaction/end', time: 200 },
   ], 'runtime')
   assert.equal(state?.stale, true)
   assert.equal(state?.hash, memorySnapshotHash('snapshot'))
+})
+
+test('restored snapshot ignores DSH runtime context with the same plugin source', () => {
+  const state = restoreMemorySnapshotState([
+    { type: 'user/message', time: 100, data: { source: { kind: 'plugin', plugin: 'runtime', sections: [{ name: 'qq-chat-context' }] }, content: [{ type: 'text', text: 'qq memory' }] } },
+    { type: 'user/message', time: 200, data: { source: { kind: 'plugin', plugin: 'runtime' }, content: [{ type: 'text', text: 'Current runtime context' }] } },
+  ], 'runtime')
+  assert.equal(state?.hash, memorySnapshotHash('qq memory'))
+  assert.equal(state?.lastInjectedAt, 100)
 })

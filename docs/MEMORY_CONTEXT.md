@@ -16,6 +16,22 @@ QQChat 的记忆属于 DSH Session 上下文的一部分，不脱离 Session 单
 
 ## 2. 记忆快照的范围
 
+### 2.1 直注入预算
+
+记忆快照遵循与咕咕一致的按 scope 限制策略，避免 profile、daily 或长期
+memory 无限增长后挤占 DSH 对话上下文：
+
+- 群级记忆字段合计最多直注入 2000 个字符；
+- 当前发言成员的记忆字段合计最多直注入 2000 个字符；
+- 私聊成员记忆字段合计最多直注入 2000 个字符；
+- 近期沉淀优先保留末尾的最新内容；其他字段从开头保留；
+- 被裁剪的内容仍保存在 SQLite 中，不会因为注入预算被删除；
+- 预算只限制本轮 snapshot 文本，不改变 DSH Session 的历史或 compact 规则。
+
+这里的 2000 是稳定、可预测的字符预算，不是模型输出 `maxTokens`。反思和
+`daily → memory` 压缩仍分别使用 `memoryMaxTokens` 与
+`memoryCompressionMaxTokens` 控制输出长度。
+
 快照按照 Session 的聊天范围生成：
 
 ### 群聊 Session
