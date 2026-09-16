@@ -20,7 +20,7 @@ import type { LoggerLike, QQChatConfigInput } from './types.js'
 const qqChatSessionEventRegistrations = await registerQQChatSessionEventType()
 
 export const name = 'dsh-qqchat'
-export const inject = ['connection', 'agents', 'agentDefaultModel', 'commands', 'llm', 'tools', 'workspaceRegistry'] as const
+export const inject = ['connection', 'agents', 'agentDefaultModel', 'commands', 'llm', 'tools', 'webServer', 'workspaceRegistry'] as const
 
 export function apply(ctx: Context, inputConfig: QQChatConfigInput = {}): void {
   const config = resolveConfig(inputConfig)

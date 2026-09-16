@@ -29,11 +29,11 @@ export interface SlotRegistry {
   inject(name: string, fn: () => unknown): unknown
   register<P>(options: Record<string, unknown>, component: import('react').ComponentType<P>): unknown
 }
-export interface ConversationEvents { register(definition: Record<string, unknown>): unknown }
+export interface UiConversation { events: { register(definition: Record<string, unknown>): unknown } }
 export interface Ctx {
   connection: { rpc: Rpc }
   sessions: SessionsService
-  conversationEvents: ConversationEvents
+  uiConversation: UiConversation
   effect(fn: () => (() => void) | void, label: string): unknown
   slots: SlotRegistry
 }

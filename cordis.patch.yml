@@ -5,3 +5,8 @@
       name: dsh-qqchat
       config:
         dataDir: !!js dshHomePath('plugins/dsh-qqchat')
+
+# DSH 0.1.6's Connection RPC registry owns route lifetimes on the
+# connection fiber, so that fiber must also receive the Web server service.
+- id: connection
+  inject: [webRuntime, webServer]
