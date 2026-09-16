@@ -60,7 +60,9 @@ client-src/*.cts      -> 临时 CJS       Client
 临时 CJS              -> lib/client.js  DSH ModuleLoader factory
 ```
 
-`lib/` 和临时 Client 构建目录是生成物，不是源码真相。
+`lib/` 是由构建生成的发布产物，同时提交到仓库以支持 DSH Store 从固定 Commit
+直接安装；修改源码后发布前必须重新构建并检查 `lib/` 的变更。临时 Client
+构建目录仍是本地生成物，不提交。
 
 ## 启动 DSH Web
 

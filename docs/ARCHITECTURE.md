@@ -401,7 +401,8 @@ tests/*.test.ts
 
 Host 使用 `tsc`；Client 编译到临时 CJS 后由 `scripts/wrap-client.mjs` 包装成 DSH Client factory。
 
-`lib/` 是生成物，不作为源码真相。
+`lib/` 是由源码生成的发布产物，并随固定 Commit 提交，以便 DSH Store 无需执行
+第三方安装脚本即可找到运行入口；源码仍是实现真相。
 
 ## 开发与安全文档
 

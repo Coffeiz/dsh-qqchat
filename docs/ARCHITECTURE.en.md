@@ -339,7 +339,7 @@ client-src/*.cts
 tests/*.test.ts
 ```
 
-The Host is built with `tsc`. The Client is compiled to temporary CJS and then wrapped by `scripts/wrap-client.mjs` as a DSH Client factory. `lib/` is generated output rather than source truth.
+The Host is built with `tsc`. The Client is compiled to temporary CJS and then wrapped by `scripts/wrap-client.mjs` as a DSH Client factory. `lib/` is generated release output committed with fixed revisions so DSH Store can find the runtime entry without executing third-party install scripts; source remains the implementation truth.
 
 ## Development and security documentation
 

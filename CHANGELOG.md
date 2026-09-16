@@ -2,6 +2,19 @@
 
 本文件记录当前分支相对 `main` 的用户可见变化。内部同步探针、临时文件和实现重排已合并到对应的维护项中。
 
+## 未发布
+
+### DSH 0.1.6 兼容性
+
+- 适配 DSH `0.1.6-alpha.1` 的 Session 查询、Agent Preset 和 RPC 注册接口。
+- 将客户端注入从已移除的 `@deepseek-ai/dsh-client-runtime` 切换为官方新版的 `@deepseek-ai/dsh-client-modules`。
+- 接入 DSH 新版 `agent/assistant-stream` 事件，恢复私聊流式回复的增量发送。
+- 插件版本更新到 `0.2.6`。
+
+### 发布与安装
+
+- 规范化 manifest 的 GitHub 仓库地址，提交构建后的 `lib/` 运行产物，并移除安装期 `prepare` 构建，支持 DSH Store 从固定 Commit 直接识别并安装插件。
+
 ## 0.2.5 · 2026-08-30
 
 ### DSH Web 会话归属

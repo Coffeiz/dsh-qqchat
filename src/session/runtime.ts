@@ -29,6 +29,7 @@ export class QQChatRuntime {
   ) {}
 
   async start(): Promise<void> {
+    await this.bridge.attachMappedSessionsToWorkspace()
     for (const account of this.db.enabledAccounts()) this.startGateway(account)
     this.outboxTimer = setInterval(() => void this.flushOutbox(), 3000)
     this.outboxTimer.unref?.()

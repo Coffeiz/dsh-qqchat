@@ -11,7 +11,7 @@
 推荐采用以下结构：
 
 ```text
-DSH assistant/chunk
+DSH `agent/assistant-stream` 的 chunk frame
   -> StreamingWriter
   -> 累计完整文本
   -> 节流定时器
@@ -118,7 +118,7 @@ interface StreamingWriterState {
 
 ### 2. 累计全文，不累计分片
 
-DSH 的 `assistant/chunk` 通常是增量文本：
+DSH 的 `agent/assistant-stream` chunk frame 通常携带增量文本：
 
 ```text
 "你好"
