@@ -29,6 +29,7 @@ export declare class DshQQBridge {
     private readonly disposeImageTool;
     private readonly disposeMediaTools;
     constructor(ctx: Context, db: QQChatDatabase, memory: MemoryEngine, config: QQChatConfig, logger?: LoggerLike);
+    attachMappedSessionsToWorkspace(): Promise<void>;
     dispose(): Promise<void>;
     ensureChatSession(chatType: ChatType, row: GroupRow | MemberRow): Promise<string>;
     recordTranscript(event: QQChatDisplayEvent, row: GroupRow | MemberRow, createSession?: boolean): Promise<string | undefined>;
@@ -38,6 +39,7 @@ export declare class DshQQBridge {
     private restoreMemorySnapshot;
     private ensureAgent;
     private isArchived;
+    private attachToWorkspace;
     private rememberRoute;
     private appendDisplayIfMissing;
     private appendOwnerMessageIfMissing;
