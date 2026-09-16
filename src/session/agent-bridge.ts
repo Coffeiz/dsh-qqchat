@@ -3,7 +3,7 @@ import { createRequire } from 'node:module'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { AgentHandle, AgentOptions, AgentSetup, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
-import { resolveSessionPreset } from '@deepseek-ai/dsh-agent-presets'
+import { agentPresetProjectionDefinition } from '@deepseek-ai/dsh-agent-presets'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { CommandInvocation, CommandRuntime, CommandResult } from '@deepseek-ai/dsh-commands'
@@ -46,7 +46,9 @@ interface Composition { presetId?: string; setup?: AgentSetup }
 interface ActiveActor { chatType: ChatType; senderId: string }
 
 export function resolveQQSessionPreset(header: Session['header'], events: readonly SessionEvent[]): string | undefined {
-  return resolveSessionPreset({ header, events })
+  let current = agentPresetProjectionDefinition.init(header)
+  for (const event of events) current = agentPresetProjectionDefinition.apply(current, event)
+  return current || undefined
 }
 
 const MEDIA_TOOL_NAMES = new Set(['qqchat_describe_image', 'qqchat_read_file', 'qqchat_media_info'])
@@ -65,6 +67,7 @@ export class DshQQBridge {
   private readonly activeMediaReadable = new Map<string, boolean>()
   private readonly memorySnapshots = new Map<string, MemorySnapshotState>()
   private readonly disposeEvent: () => void
+  private readonly disposeAssistantStream: () => void
   private readonly disposeToolGate: () => void
   private readonly disposeCommands: () => void
   private readonly disposeImageTool: () => void
@@ -78,6 +81,10 @@ export class DshQQBridge {
     private readonly logger: LoggerLike = console,
   ) {
     this.disposeEvent = ctx.on('session/event', (session, event) => this.onSessionEvent(session, event))
+    this.disposeAssistantStream = ctx.on('agent/assistant-stream', ({ agent, frame }) => {
+      if (frame.type !== 'chunk' || frame.chunk.type !== 'text-delta' || !frame.chunk.text) return
+      this.pending.get(String(agent.id))?.onTextDelta?.(frame.chunk.text)
+    })
     this.disposeToolGate = ctx.on('tools/pre-execute', async (exec, next): Promise<PreToolDecision> => {
       const agent = exec.agent
       if (!agent) return next()
@@ -102,6 +109,7 @@ export class DshQQBridge {
 
   async dispose(): Promise<void> {
     this.disposeEvent()
+    this.disposeAssistantStream()
     this.disposeToolGate()
     this.disposeImageTool()
     this.disposeMediaTools()
@@ -235,12 +243,6 @@ export class DshQQBridge {
       if (text.trim()) pending.text = text
       return
     }
-    if (event.type === 'assistant/chunk') {
-      const pending = this.pending.get(id)
-      const chunk = event.data.chunk
-      if (pending?.onTextDelta && chunk.type === 'text-delta' && chunk.text) pending.onTextDelta(chunk.text)
-      return
-    }
     if (event.type === 'request/header') {
       const { config } = event.data.header
       if (config.provider && config.model) this.routes.set(id, { provider: config.provider, model: config.model })
@@ -271,7 +273,7 @@ export class DshQQBridge {
   }
 
   private restoreMemorySnapshot(session: Session): MemorySnapshotState | undefined {
-    return restoreMemorySnapshotState(session.events as unknown as Parameters<typeof restoreMemorySnapshotState>[0], DSH_RUNTIME_CONTEXT_SOURCE)
+    return restoreMemorySnapshotState(session.snapshotEvents() as unknown as Parameters<typeof restoreMemorySnapshotState>[0], DSH_RUNTIME_CONTEXT_SOURCE)
   }
 
   private async ensureAgent(chatType: ChatType, row: GroupRow | MemberRow): Promise<{ agent: AgentHandle['agent']; sessionId: string }> {
@@ -336,7 +338,7 @@ export class DshQQBridge {
   }
 
   private appendDisplayIfMissing(session: Session, event: QQChatDisplayEvent): void {
-    if (session.events.some(item => item.type === 'qqchat/message' && item.data.messageId === event.messageId)) return
+    if (session.snapshotEvents().some(item => item.type === 'qqchat/message' && item.data.messageId === event.messageId)) return
     // Keep this on the public Session.append signature. Official DSH releases
     // do not yet expose the optional ignorable envelope marker; if an older
     // DSH cannot restore this plugin-only event, ensureAgent falls back to a
@@ -345,7 +347,7 @@ export class DshQQBridge {
   }
 
   private appendOwnerMessageIfMissing(session: Session, event: QQChatDisplayEvent): void {
-    if (session.events.some(item => {
+    if (session.snapshotEvents().some(item => {
       if (item.type !== 'user/message') return false
       const source = item.data.source as unknown as { messageId?: string }
       return source.messageId === event.messageId
@@ -521,7 +523,7 @@ export class DshQQBridge {
       const available = await presets.list()
       return { kind: 'success', text: available.length ? `可用 Agent Preset：\n${available.map(preset => `/qqpreset ${preset.id}`).join('\n')}` : '当前没有可用 Agent Preset。' }
     }
-    if (agent.session.events.some(event => event.type === 'turn/start')) {
+    if (agent.session.snapshotEvents().some(event => event.type === 'turn/start')) {
       return { kind: 'error', text: '当前 Session 已经开始对话，DSH 不允许更换 Agent Preset。请先使用 /qqnew 开启新 Session。' }
     }
     try {
@@ -539,8 +541,9 @@ export class DshQQBridge {
 
   private statusCommand(agent: AgentHandle['agent']): CommandResult {
     const current = this.selection(agent)?.current
-    const messages = agent.session.events.filter(event => event.type === 'user/message' || event.type === 'assistant/message').length
-    const last = agent.session.events.at(-1)
+    const events = agent.session.snapshotEvents()
+    const messages = events.filter(event => event.type === 'user/message' || event.type === 'assistant/message').length
+    const last = events.at(-1)
     return {
       kind: 'success',
       text: ['📊 Session 状态', `Session：${String(agent.id)}`, `状态：${agent.status === 'running' ? '生成中' : '空闲'}`, `模型：${current ? `${current.provider}/${current.model}` : '未知'}`, `消息数：${messages}`, `最后事件：${last?.type || '无'}`].join('\n'),

@@ -38,7 +38,7 @@ export function apply(ctx: Context, inputConfig: QQChatConfigInput = {}): void {
   const bridge = new DshQQBridge(ctx, db, memory, config, logger)
   const runtime = new QQChatRuntime(ctx, db, api, auth, memory, bridge, config, logger, media)
 
-  ctx.connection.rpc.handle('/qqchat', createQQChatRpc(runtime), { authority: 'loopback' })
+  ctx.connection.rpc.handle('/qqchat', createQQChatRpc(runtime))
   ctx.effect(() => {
     void (async () => {
       await runtime.start()

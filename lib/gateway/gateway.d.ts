@@ -1,0 +1,32 @@
+import type { QQApiClient } from './api.js';
+import type { QQChatDatabase } from '../storage/db.js';
+import type { AccountRow, LoggerLike, QQNormalizedMessage } from '../types.js';
+type QQMessageHandler = (message: QQNormalizedMessage) => Promise<void> | void;
+export declare class QQGateway {
+    readonly account: AccountRow;
+    private readonly db;
+    private readonly api;
+    private readonly onMessage;
+    private readonly logger;
+    private stopped;
+    private ws?;
+    private sessionId?;
+    private lastSeq;
+    private heartbeatTimer?;
+    private ackTimer?;
+    private lastAckAt;
+    private loopPromise?;
+    private readonly dispatchChains;
+    constructor(account: AccountRow, db: QQChatDatabase, api: QQApiClient, onMessage: QQMessageHandler, logger?: LoggerLike);
+    start(): void;
+    stop(): Promise<void>;
+    private loop;
+    private connectOnce;
+    private handleFrame;
+    private handleDispatch;
+    private enqueueMessage;
+    private installHeartbeat;
+    private clearHeartbeat;
+    private send;
+}
+export {};

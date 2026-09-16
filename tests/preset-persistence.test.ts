@@ -11,7 +11,7 @@ test('Host Session events survive the persistence inspection boundary for preset
   await ctx.plugin(SessionStore)
 
   const sessionId = SessionId('qqchat-preset-persistence')
-  const header: SessionHeader = { version: 0, id: sessionId, createdAt: 1, cwd: '/workspace' }
+  const header: SessionHeader = { version: 3, id: sessionId, createdAt: 1, cwd: '/workspace', isSeeded: false }
   const persisted: SessionEvent[] = []
   ctx.provide('sessionPersistence', {
     inspect: async () => ({ meta: header, events: structuredClone(persisted) }),
