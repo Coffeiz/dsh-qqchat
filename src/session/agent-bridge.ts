@@ -41,6 +41,7 @@ interface SessionPersistenceService { inspect(id: SessionId): Promise<{ meta: Se
 interface SessionTitleService { get(session: Session): unknown; rename(session: Session, title: string): unknown }
 interface WorkspaceRegistryService {
   archivedSessionIds: readonly string[]
+  resolveByPath(path: string): Promise<{ attachSession(sessionId: import('@deepseek-ai/dsh-session').SessionId): Promise<void> } | undefined>
 }
 interface Composition { presetId?: string; setup?: AgentSetup }
 interface ActiveActor { chatType: ChatType; senderId: string }
@@ -105,6 +106,16 @@ export class DshQQBridge {
     this.disposeImageTool = registerQQImageTool(ctx, db, canReadMedia)
     this.disposeMediaTools = registerQQMediaTools(ctx, db, canReadMedia)
     this.disposeCommands = this.registerCommands()
+  }
+
+  async attachMappedSessionsToWorkspace(): Promise<void> {
+    const sessionIds = [
+      ...this.db.listGroups().map(row => row.dsh_session_id),
+      ...this.db.listDirectChats().map(row => row.dsh_session_id),
+    ]
+    for (const sessionId of sessionIds) {
+      if (sessionId) await this.attachToWorkspace(sessionId)
+    }
   }
 
   async dispose(): Promise<void> {
@@ -294,6 +305,7 @@ export class DshQQBridge {
       if (live) {
         this.ensureSelection(live)
         this.ensureTitle(live.session, chatType, row)
+        await this.attachToWorkspace(sessionId)
         this.rememberRoute(chatType, row, live, sessionId)
         return { agent: live, sessionId }
       }
@@ -301,6 +313,7 @@ export class DshQQBridge {
       if (resumed) {
         this.ensureSelection(resumed.agent)
         this.ensureTitle(resumed.agent.session, chatType, row)
+        await this.attachToWorkspace(sessionId)
         this.rememberRoute(chatType, row, resumed.agent, sessionId)
         return { agent: resumed.agent, sessionId }
       }
@@ -319,6 +332,7 @@ export class DshQQBridge {
     this.handles.set(sessionId, handle)
     this.ensureSelection(handle.agent)
     this.db.setChatSession(chatType, Number(row.id), sessionId)
+    await this.attachToWorkspace(sessionId)
     this.ensureTitle(handle.agent.session, chatType, row)
     this.rememberRoute(chatType, row, handle.agent, sessionId)
     return { agent: handle.agent, sessionId }
@@ -327,6 +341,17 @@ export class DshQQBridge {
   private isArchived(sessionId: string): boolean {
     const registry = (this.ctx as unknown as { workspaceRegistry?: WorkspaceRegistryService }).workspaceRegistry
     return registry?.archivedSessionIds.includes(sessionId) ?? false
+  }
+
+  private async attachToWorkspace(sessionId: string): Promise<void> {
+    const registry = (this.ctx as unknown as { workspaceRegistry?: WorkspaceRegistryService }).workspaceRegistry
+    if (!registry) return
+    try {
+      const workspace = await registry.resolveByPath(process.cwd())
+      await workspace?.attachSession(SessionId(sessionId))
+    } catch (error) {
+      this.logger.warn?.(`[dsh-qqchat] QQ session ${sessionId} 未能挂载到当前工作区: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   private rememberRoute(chatType: ChatType, row: GroupRow | MemberRow, agent: AgentHandle['agent'], sessionId: string): void {
