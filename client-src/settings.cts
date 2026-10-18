@@ -116,8 +116,8 @@ export function QQSettings({ rpc }: { rpc: Rpc }) {
     align: 'end',
     items: [{ id: '', label: '不设置 Owner' }, ...members.map(member => ({ id: member.platformUserId, label: member.displayName || 'QQ 群友' }))],
   })
-  const formatLabel = (value: ReplyFormat | undefined) => value === 'markdown' ? 'Markdown' : value === 'compat' ? '纯文本兼容' : '智能兼容'
-  const formatItems = [{ id: 'smart', label: '智能兼容' }, { id: 'markdown', label: 'Markdown' }, { id: 'compat', label: '纯文本兼容' }]
+  const formatLabel = (value: ReplyFormat | undefined) => value === 'compat' ? '纯文本兼容' : 'Markdown'
+  const formatItems = [{ id: 'markdown', label: 'Markdown' }, { id: 'compat', label: '纯文本兼容' }]
   const groupReplyPicker = h(Menu, {
     open: groupReplyMenuOpen,
     onClose: () => setGroupReplyMenuOpen(false),
@@ -195,23 +195,10 @@ export function QQSettings({ rpc }: { rpc: Rpc }) {
       h('div', null, h('div', { className: 'qqSettingTitle' }, '群聊消息兼容格式'), h('div', { className: 'qqSettingHelp' }, '仅控制发送到 QQ 群聊时使用的消息格式。')),
       h('div', { className: 'qqControl' }, groupReplyPicker)),
     h('div', { className: 'qqSetting' },
-      h('div', null, h('div', { className: 'qqSettingTitle' }, '私聊消息兼容格式'), h('div', { className: 'qqSettingHelp' }, '仅控制发送到 QQ 私聊时使用的消息格式。')),
-      h('div', { className: 'qqControl' }, directReplyPicker)),
-    h('div', { className: 'qqSetting' },
-      h('label', { className: 'qqCheckRow' },
-        h('input', {
-          type: 'checkbox',
-          checked: settings.directStreamingEnabled && settings.directReplyFormat !== 'compat',
-          disabled: settings.directReplyFormat === 'compat',
-          onChange: (event: import('react').ChangeEvent<HTMLInputElement>) => void patch({ directStreamingEnabled: event.target.checked }),
-        }),
-        h('span', null,
-          h('div', { className: 'qqSettingTitle' }, '私聊流式回复'),
-          h('div', { className: 'qqSettingHelp' }, settings.directReplyFormat === 'compat'
-            ? '纯文本兼容模式不支持流式传输，已自动关闭。'
-            : settings.directStreamingEnabled
-            ? '使用 QQ 官方流式接口逐步更新私聊回复；部分 QQ 客户端可能看不到流式效果。'
-            : '使用普通一次性消息发送，兼容性更好。'))))
+      h('div', null, h('div', { className: 'qqSettingTitle' }, '私聊消息格式'), h('div', { className: 'qqSettingHelp' }, settings.directReplyFormat === 'markdown'
+        ? 'Markdown 格式默认使用 QQ 官方流式接口逐步更新回复；部分客户端可能看不到流式效果。'
+        : '纯文本兼容格式使用普通发送，不启用流式传输。')),
+      h('div', { className: 'qqControl' }, directReplyPicker))
   )
   const memoryGroup = h('div', { className: 'qqSettingsGroup' },
     h('h3', null, '记忆系统'),

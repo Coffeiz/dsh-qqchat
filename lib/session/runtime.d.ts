@@ -38,5 +38,7 @@ export declare class QQChatRuntime {
     private flushOutbox;
 }
 export declare function shouldReplyToGroup(mode: GroupReceiveMode, group: Pick<GroupRow, 'enabled' | 'read_enabled'>, mentioned: boolean): boolean;
+/** Record messages that do not enter the Agent turn, plus QQ commands handled outside Agent.followup. */
+export declare function shouldRecordQQTranscript(shouldReply: boolean, text: string, mentioned: boolean): boolean;
 export declare function mergeIndexedQuote(message: QQNormalizedMessage, indexed: import('../types.js').QQQuoteIndexRow | undefined): QQNormalizedMessage;
 export declare function indexAttachments(inputs: QQAttachmentInput[], stored: StoredAttachmentSummary[]): QQAttachmentInput[];

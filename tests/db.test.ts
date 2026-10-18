@@ -95,9 +95,8 @@ test('runtime settings persist independently from static config defaults', () =>
     memoryEnabled: true,
     memoryMemberBatchEnabled: true,
     groupReceiveMode: 'mention' as const,
-    groupReplyFormat: 'smart' as const,
-    directReplyFormat: 'smart' as const,
-    directStreamingEnabled: true,
+    groupReplyFormat: 'compat' as const,
+    directReplyFormat: 'markdown' as const,
     groupMembersCanUseTools: false,
     groupMembersCanReceiveMedia: true,
     groupMembersCanReadMedia: false,
@@ -105,7 +104,8 @@ test('runtime settings persist independently from static config defaults', () =>
   }
   assert.deepEqual(db.runtimeSettings(defaults), defaults)
   db.setSetting('groupReceiveMode', 'silent')
-  db.setSetting('groupReplyFormat', 'compat')
+  db.setSetting('groupReplyFormat', 'smart')
+  db.setSetting('directReplyFormat', 'smart')
   db.setSetting('groupMembersCanUseTools', true)
   db.setSetting('directStreamingEnabled', false)
   db.setSetting('groupMembersCanReceiveMedia', true)
@@ -117,15 +117,46 @@ test('runtime settings persist independently from static config defaults', () =>
     memoryEnabled: false,
     memoryMemberBatchEnabled: false,
     groupReceiveMode: 'silent',
-    groupReplyFormat: 'compat',
-    directReplyFormat: 'smart',
-    directStreamingEnabled: false,
+    groupReplyFormat: 'markdown',
+    directReplyFormat: 'markdown',
     groupMembersCanUseTools: true,
     groupMembersCanReceiveMedia: true,
     groupMembersCanReadMedia: true,
     ownerUserId: 'owner-openid',
   })
 }))
+
+test('database migration converts legacy formats and removes the streaming toggle', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-qqchat-settings-migration-'))
+  const path = join(dir, 'qqchat.sqlite')
+  let db = new QQChatDatabase(path)
+  try {
+    db.setSetting('replyFormat', 'smart')
+    db.setSetting('groupReplyFormat', 'smart')
+    db.setSetting('directReplyFormat', 'smart')
+    db.setSetting('directStreamingEnabled', false)
+    db.close()
+    db = new QQChatDatabase(path)
+    const defaults = {
+      memoryEnabled: true,
+      memoryMemberBatchEnabled: true,
+      groupReceiveMode: 'mention' as const,
+      groupReplyFormat: 'compat' as const,
+      directReplyFormat: 'markdown' as const,
+      groupMembersCanUseTools: false,
+      groupMembersCanReceiveMedia: true,
+      groupMembersCanReadMedia: false,
+      ownerUserId: '',
+    }
+    const settings = db.runtimeSettings(defaults)
+    assert.equal(settings.groupReplyFormat, 'markdown')
+    assert.equal(settings.directReplyFormat, 'markdown')
+    assert.equal(db.getSetting('directStreamingEnabled', 'deleted'), 'deleted')
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
 
 test('direct chats are listed from c2c history and keep their DSH session mapping', () => withDb(db => {
   const account = db.upsertAccount('app-direct', 'secret-direct')

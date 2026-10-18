@@ -1,5 +1,5 @@
 import type { QQChatDatabase } from '../storage/db.js';
-import type { AccountRow, QQChatConfig, QQSendOptions, ReplyFormat } from '../types.js';
+import type { AccountRow, QQChatConfig, QQSendOptions } from '../types.js';
 export interface QQPrivateTextStream {
     push(delta: string): void;
     finish(text: string): Promise<void>;
@@ -25,6 +25,5 @@ export declare class QQApiClient {
     private request;
     sendText(account: AccountRow, targetId: string, text: string, { group, messageId, format }?: QQSendOptions): Promise<Record<string, unknown>>;
     sendReplyWithActiveFallback(account: AccountRow, targetId: string, text: string, options: QQSendOptions): Promise<Record<string, unknown>>;
-    createPrivateTextStream(account: AccountRow, targetId: string, { messageId, format }?: QQSendOptions): QQPrivateTextStream;
+    createPrivateTextStream(account: AccountRow, targetId: string, { messageId }?: Pick<QQSendOptions, 'messageId'>): QQPrivateTextStream;
 }
-export declare function isReplyFormat(value: string): value is ReplyFormat;

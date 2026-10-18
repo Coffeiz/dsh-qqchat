@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { indexAttachments, mergeIndexedQuote, shouldReplyToGroup } from '../src/session/runtime.js'
+import { indexAttachments, mergeIndexedQuote, shouldRecordQQTranscript, shouldReplyToGroup } from '../src/session/runtime.js'
 import type { QQNormalizedMessage } from '../src/types.js'
 
 const group = { enabled: 1 as const, read_enabled: 1 as const }
@@ -21,6 +21,16 @@ test('global silent mode does not reply even when the bot is mentioned', () => {
 test('disabled or unreadable groups never reply', () => {
   assert.equal(shouldReplyToGroup('auto', { enabled: 0, read_enabled: 1 }, false), false)
   assert.equal(shouldReplyToGroup('auto', { enabled: 1, read_enabled: 0 }, false), false)
+})
+
+test('Agent-bound QQ messages are recorded by the Agent turn, not pre-appended before its system head', () => {
+  assert.equal(shouldRecordQQTranscript(true, 'hello', false), false)
+})
+
+test('non-Agent messages and QQ commands remain in the QQ transcript', () => {
+  assert.equal(shouldRecordQQTranscript(false, 'hello', false), true)
+  assert.equal(shouldRecordQQTranscript(true, '/qqhelp', false), true)
+  assert.equal(shouldRecordQQTranscript(true, '@bot /qqhelp', true), true)
 })
 
 test('indexed quote fills missing text and attachments without changing current text', () => {

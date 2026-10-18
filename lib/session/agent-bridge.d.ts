@@ -42,7 +42,6 @@ export declare class DshQQBridge {
     private attachToWorkspace;
     private rememberRoute;
     private appendDisplayIfMissing;
-    private appendOwnerMessageIfMissing;
     private ensureTitle;
     private tryResume;
     private agentOptions;

@@ -18,7 +18,7 @@ export function getQQRpc(): Rpc | undefined { return qqRpc }
 
 export type ChatType = 'c2c' | 'group'
 export type GroupReceiveMode = 'auto' | 'mention' | 'silent'
-export type ReplyFormat = 'smart' | 'markdown' | 'compat'
+export type ReplyFormat = 'markdown' | 'compat'
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 export type RpcResult<T> = { ok: true; value: T } | { ok: false; error?: { message?: string } }
 export interface Rpc { call(channel: string, endpoint: string, payload: unknown): Promise<RpcResult<unknown>> }
@@ -38,7 +38,7 @@ export interface Ctx {
   slots: SlotRegistry
 }
 export interface Account { id: number; appId: string; enabled: boolean; gatewayStatus: string; gatewayLastError?: string | null }
-export interface Settings { memoryEnabled: boolean; memoryMemberBatchEnabled: boolean; groupReceiveMode: GroupReceiveMode; groupReplyFormat: ReplyFormat; directReplyFormat: ReplyFormat; directStreamingEnabled: boolean; groupMembersCanUseTools: boolean; groupMembersCanReceiveMedia: boolean; groupMembersCanReadMedia: boolean; ownerUserId: string }
+export interface Settings { memoryEnabled: boolean; memoryMemberBatchEnabled: boolean; groupReceiveMode: GroupReceiveMode; groupReplyFormat: ReplyFormat; directReplyFormat: ReplyFormat; groupMembersCanUseTools: boolean; groupMembersCanReceiveMedia: boolean; groupMembersCanReadMedia: boolean; ownerUserId: string }
 export interface KnownMember { id: number; platformUserId: string; displayName: string; lastSeenAt: number }
 export interface ChatItem { chatType: ChatType; rowId: number; platformId: string; displayName: string; dshSessionId: string | null; lastMessageAt: number | null; messageCount: number }
 export interface Memory { profile: string; summary: string; daily: string; memory: string; pattern: string }

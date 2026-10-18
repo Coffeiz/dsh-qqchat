@@ -148,15 +148,6 @@ export class DshQQBridge {
     if (!existing && !createSession) return undefined
     const { agent, sessionId } = await this.ensureAgent(event.chatType, row)
     event.sessionId = sessionId
-    if (event.isOwner) {
-      // Keep owner messages as native user/message events even when they carry
-      // images. DSH now owns the image projection: visual routes receive the
-      // durable image block, while text-only routes receive its stable text
-      // placeholder. Falling back to a display-only event here would discard
-      // the owner's message semantics before DSH can apply that policy.
-      this.appendOwnerMessageIfMissing(agent.session, event)
-      return sessionId
-    }
     this.appendDisplayIfMissing(agent.session, event)
     return sessionId
   }
@@ -369,23 +360,6 @@ export class DshQQBridge {
     // DSH cannot restore this plugin-only event, ensureAgent falls back to a
     // fresh Session while SQLite remains the QQ history source of truth.
     session.append('qqchat/message', displayEventPayload(event))
-  }
-
-  private appendOwnerMessageIfMissing(session: Session, event: QQChatDisplayEvent): void {
-    if (session.snapshotEvents().some(item => {
-      if (item.type !== 'user/message') return false
-      const source = item.data.source as unknown as { messageId?: string }
-      return source.messageId === event.messageId
-    })) return
-    session.append('user/message', createUserMessage({
-      source: {
-        kind: 'user', channel: 'qq', botId: 'qqchat', chatType: event.chatType,
-        chatId: event.chatId, senderId: event.senderId,
-        ...(event.senderName ? { senderName: event.senderName } : {}),
-        messageId: event.messageId, mentioned: event.mentioned,
-      },
-      content: transcriptContent(event, this.db),
-    }), { surfaceOp: 'append' })
   }
 
   private ensureTitle(session: Session, chatType: ChatType, row: GroupRow | MemberRow): void {
@@ -630,36 +604,6 @@ export function qqMessageContent(text: string, attachments: readonly StoredAttac
     }
   }
   return content
-}
-
-function transcriptContent(event: QQChatDisplayEvent, db: QQChatDatabase): ContentBlock[] {
-  const attachments = event.attachments || []
-  const renderableImages = attachments.filter(attachment => attachment.kind === 'image' && db.attachmentById(attachment.id)?.imageRef)
-  const imagePlaceholderLines = new Set(renderableImages.map(attachment => `[图片] ${attachment.filename}`))
-  const quote = event.quote ? formatDisplayQuote(event) : ''
-  const body = event.content.split('\n').filter(line => !imagePlaceholderLines.has(line)).join('\n').trim()
-  const text = [quote, body].filter(Boolean).join('\n\n')
-  const content: ContentBlock[] = [{ type: 'text', text }]
-  for (const attachment of attachments) {
-    const imageRef = attachment.kind === 'image' ? db.attachmentById(attachment.id)?.imageRef : undefined
-    if (imageRef) {
-      content.push({ type: 'image', attachment: imageRef })
-    }
-  }
-  return content
-}
-
-function formatDisplayQuote(event: QQChatDisplayEvent): string {
-  const quote = event.quote
-  if (!quote) return ''
-  return [
-    '[引用消息]',
-    quote.senderId ? `发送人ID=${quote.senderId}` : '',
-    quote.senderName ? `显示名=${quote.senderName}` : '',
-    quote.messageId ? `消息ID=${quote.messageId}` : '',
-    `正文=${quote.text || '(空消息)'}`,
-    quote.attachments.length ? `附件=${quote.attachments.map(attachment => `${attachment.kind || 'file'}:${attachment.filename}${attachment.attachmentId ? ` (attachment_id=${attachment.attachmentId})` : ''}`).join('、')}` : '',
-  ].filter(Boolean).join('\n')
 }
 
 function displayEventPayload(event: QQChatDisplayEvent): QQChatDisplayEvent {

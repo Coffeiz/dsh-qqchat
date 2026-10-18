@@ -9,6 +9,7 @@ import type { QQApiClient } from '../gateway/api.js'
 import type { QQBindService } from '../gateway/auth.js'
 import { QQGateway } from '../gateway/gateway.js'
 import { renderQQMentionNames } from '../gateway/normalize.js'
+import { qqCommandText } from '../commands/dispatch.js'
 import { QQMediaStore } from '../media/store.js'
 import type {
   AccountRow, ChatTargetRow, ChatType, GroupReceiveMode, GroupRow, MemberRow, QQAttachmentInput, QQChatConfig,
@@ -52,9 +53,7 @@ export class QQChatRuntime {
   }
 
   settings(): QQChatRuntimeSettings {
-    const settings = this.db.runtimeSettings(defaultRuntimeSettings(this.config))
-    if (settings.directReplyFormat === 'compat') settings.directStreamingEnabled = false
-    return settings
+    return this.db.runtimeSettings(defaultRuntimeSettings(this.config))
   }
 
   updateSettings(patch: QQChatRuntimeSettingsPatch): QQChatRuntimeSettings {
@@ -71,9 +70,7 @@ export class QQChatRuntime {
     if (patch.directReplyFormat !== undefined) {
       if (!isReplyFormat(patch.directReplyFormat)) throw new Error('无效的私聊消息兼容格式')
       this.db.setSetting('directReplyFormat', patch.directReplyFormat)
-      if (patch.directReplyFormat === 'compat') this.db.setSetting('directStreamingEnabled', false)
     }
-    if (patch.directStreamingEnabled !== undefined) this.db.setSetting('directStreamingEnabled', Boolean(patch.directStreamingEnabled))
     if (patch.groupMembersCanUseTools !== undefined) this.db.setSetting('groupMembersCanUseTools', Boolean(patch.groupMembersCanUseTools))
     if (patch.groupMembersCanReceiveMedia !== undefined) this.db.setSetting('groupMembersCanReceiveMedia', Boolean(patch.groupMembersCanReceiveMedia))
     if (patch.groupMembersCanReadMedia !== undefined) this.db.setSetting('groupMembersCanReadMedia', Boolean(patch.groupMembersCanReadMedia))
@@ -252,22 +249,21 @@ export class QQChatRuntime {
         }
       }
 
-    if (!shouldReply) {
+    if (shouldRecordQQTranscript(shouldReply, message.text, message.mentioned)) {
       await this.bridge.recordTranscript(displayEvent, row, true)
+    }
+    if (!shouldReply) {
       return
     }
 
     try {
-      // Keep the incoming QQ message visible in Web independently from the
-      // notice-shaped message used to drive the Agent turn.
-      await this.bridge.recordTranscript(displayEvent, row, true)
       const targetId = message.chatType === 'group' ? message.groupOpenid! : message.senderId
       const sendOptions = {
         group: message.chatType === 'group', messageId: message.messageId || null,
         format: message.chatType === 'group' ? settings.groupReplyFormat : settings.directReplyFormat,
       } as const
-      const stream = message.chatType === 'c2c' && settings.directReplyFormat !== 'compat' && settings.directStreamingEnabled
-        ? this.api.createPrivateTextStream(account, targetId, sendOptions)
+      const stream = message.chatType === 'c2c' && settings.directReplyFormat === 'markdown'
+        ? this.api.createPrivateTextStream(account, targetId, { messageId: sendOptions.messageId })
         : undefined
       const reply = await this.bridge.reply(message, group, member, storedAttachments, stream ? delta => stream.push(delta) : undefined, isOwner)
       if (stream) {
@@ -320,10 +316,14 @@ export class QQChatRuntime {
 }
 
 function isGroupReceiveMode(value: unknown): value is GroupReceiveMode { return value === 'auto' || value === 'mention' || value === 'silent' }
-function isReplyFormat(value: unknown): value is ReplyFormat { return value === 'smart' || value === 'markdown' || value === 'compat' }
+function isReplyFormat(value: unknown): value is ReplyFormat { return value === 'markdown' || value === 'compat' }
 export function shouldReplyToGroup(mode: GroupReceiveMode, group: Pick<GroupRow, 'enabled' | 'read_enabled'>, mentioned: boolean): boolean {
   if (group.enabled !== 1 || group.read_enabled !== 1) return false
   return mode === 'auto' || (mode === 'mention' && mentioned)
+}
+/** Record messages that do not enter the Agent turn, plus QQ commands handled outside Agent.followup. */
+export function shouldRecordQQTranscript(shouldReply: boolean, text: string, mentioned: boolean): boolean {
+  return !shouldReply || qqCommandText(text, mentioned) !== undefined
 }
 function shortId(value: string): string { return value.length > 10 ? `…${value.slice(-10)}` : value }
 function publicAttachments(attachments: StoredAttachmentSummary[]): StoredAttachmentSummary[] {

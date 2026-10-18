@@ -12,10 +12,6 @@ const API_BASE = 'https://api.sgroup.qq.com'
 const SANDBOX_API_BASE = 'https://sandbox.api.sgroup.qq.com'
 const TOKEN_URL = 'https://bots.qq.com/app/getAppAccessToken'
 
-function looksLikeMarkdown(text: string): boolean {
-  return /(^|\n)\s{0,3}(#{1,6}\s|[-*+]\s|\d+\.\s|>\s)|\*\*|__|`|\[[^\]]+\]\([^\)]+\)/m.test(text)
-}
-
 interface CachedToken {
   token: string
   expiresAt: number
@@ -33,7 +29,7 @@ interface QQStreamBody {
   input_mode: 'replace'
   input_state: 1 | 10
   index: number
-  content_type: 'text' | 'markdown'
+  content_type: 'markdown'
   content_raw: string
   msg_seq: number
   event_id?: string
@@ -143,7 +139,7 @@ export class QQApiClient {
   ): Promise<Record<string, unknown>> {
     const path = group ? `/v2/groups/${encodeURIComponent(targetId)}/messages` : `/v2/users/${encodeURIComponent(targetId)}/messages`
     const seq = this.nextSeq(messageId)
-    const useMarkdown = format === 'markdown' || (format === 'smart' && looksLikeMarkdown(text))
+    const useMarkdown = format === 'markdown'
     const makeBody = (markdown: boolean): QQSendBody => ({
       msg_type: markdown ? 2 : 0,
       ...(markdown ? { markdown: { content: text } } : { content: text }),
@@ -177,11 +173,10 @@ export class QQApiClient {
   createPrivateTextStream(
     account: AccountRow,
     targetId: string,
-    { messageId = null, format = this.config.replyFormat }: QQSendOptions = {},
+    { messageId = null }: Pick<QQSendOptions, 'messageId'> = {},
   ): QQPrivateTextStream {
     const path = `/v2/users/${encodeURIComponent(targetId)}/stream_messages`
     const msgSeq = this.nextStreamSeq()
-    const contentType = format === 'markdown' ? 'markdown' : 'text'
     let fullText = ''
     let streamMessageId: string | undefined
     let index = 0
@@ -196,7 +191,7 @@ export class QQApiClient {
         // Build the request only when the queued task runs. The first
         // response supplies stream_msg_id for all following frames.
         const body: QQStreamBody = {
-          input_mode: 'replace', input_state: inputState, index: index++, content_type: contentType,
+          input_mode: 'replace', input_state: inputState, index: index++, content_type: 'markdown',
           content_raw: content, msg_seq: msgSeq,
           ...(messageId ? { msg_id: messageId, event_id: messageId } : {}),
           ...(streamMessageId ? { stream_msg_id: streamMessageId } : {}),
@@ -257,8 +252,4 @@ export class QQApiClient {
 
 async function safeJson<T>(response: Response): Promise<T | undefined> {
   try { return await response.json() as T } catch { return undefined }
-}
-
-export function isReplyFormat(value: string): value is ReplyFormat {
-  return value === 'smart' || value === 'markdown' || value === 'compat'
 }

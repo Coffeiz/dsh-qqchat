@@ -36,8 +36,8 @@
 | QR connection | Binds an official QQ Bot from **Settings -> QQ Chat** | Cancel the binding and scan again when needed |
 | Manual connection | Connects with AppID and AppSecret from the settings page | Useful for headless servers or QR failures; the secret is sent only to the Host |
 | Group receive modes | Auto reply, Mention only or Silent record | Silent record stores messages without waking the Agent |
-| Message formats | Smart, Markdown or Plain compatibility | Group and direct-chat formats are configured separately; groups default to Plain compatibility |
-| Direct-chat streaming | Optionally uses QQ's official streaming message API for private chats | Private chats only; Plain compatibility disables it automatically; some clients may not display streaming |
+| Message formats | Markdown or Plain compatibility | Group and direct-chat formats are configured separately; groups default to Plain compatibility |
+| Direct-chat streaming | Markdown format automatically uses QQ's official streaming message API | Plain compatibility uses a regular send; some clients may not display streaming |
 | Quotes and mentions | Preserves quoted messages and resolves QQ mentions to display names | Stable IDs remain in metadata |
 | Memory system | Stores group, member and direct-user memory; user memory can be reused across groups under the same Bot | Group relationships and group events stay scoped; can be disabled |
 | Memory reflection | Converts recent daily notes into long-term memory | Runs asynchronously after idle or batch thresholds |
@@ -146,7 +146,7 @@ Configure **Settings -> QQ Chat -> Message reception**:
 | Mention only | All messages are stored, but only messages mentioning the Bot trigger a reply |
 | Silent record | Stores messages and memory without actively replying |
 
-Groups default to Plain compatibility format. Group and direct-chat formats can be selected independently. Plain compatibility for direct chats automatically disables streaming.
+Groups default to Plain compatibility format. Group and direct-chat formats can be selected independently between Markdown and Plain compatibility. Markdown direct chats stream by default; Plain compatibility uses a regular send. There is no separate streaming toggle.
 
 ## Commands
 

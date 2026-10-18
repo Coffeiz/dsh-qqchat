@@ -264,6 +264,9 @@ export class QQChatDatabase {
         error TEXT
       );
     `)
+    this.db.prepare("UPDATE plugin_settings SET value='\"markdown\"',updated_at=? WHERE key IN ('replyFormat','groupReplyFormat','directReplyFormat') AND value='\"smart\"'")
+      .run(now())
+    this.db.prepare("DELETE FROM plugin_settings WHERE key='directStreamingEnabled'").run()
     this.db.prepare("UPDATE reflection_tasks SET status='failed',updated_at=? WHERE status='running' AND updated_at<?")
       .run(now(), now() - REFLECTION_TASK_STALE_MS)
     const columns = new Set(many<{ name: string }>(this.db.prepare('PRAGMA table_info(group_members)').all()).map(column => column.name))
@@ -396,13 +399,16 @@ export class QQChatDatabase {
   }
 
   runtimeSettings(defaults: QQChatRuntimeSettings): QQChatRuntimeSettings {
+    const legacyReplyFormat = normalizeReplyFormat(
+      this.getSetting<unknown>('replyFormat', defaults.directReplyFormat),
+      defaults.directReplyFormat,
+    )
     return {
       memoryEnabled: this.getSetting('memoryEnabled', defaults.memoryEnabled),
       memoryMemberBatchEnabled: this.getSetting('memoryMemberBatchEnabled', defaults.memoryMemberBatchEnabled),
       groupReceiveMode: this.getSetting('groupReceiveMode', defaults.groupReceiveMode),
-      groupReplyFormat: this.getSetting('groupReplyFormat', defaults.groupReplyFormat),
-      directReplyFormat: this.getSetting('directReplyFormat', this.getSetting('replyFormat', defaults.directReplyFormat)),
-      directStreamingEnabled: this.getSetting('directStreamingEnabled', defaults.directStreamingEnabled),
+      groupReplyFormat: normalizeReplyFormat(this.getSetting<unknown>('groupReplyFormat', defaults.groupReplyFormat), defaults.groupReplyFormat),
+      directReplyFormat: normalizeReplyFormat(this.getSetting<unknown>('directReplyFormat', legacyReplyFormat), legacyReplyFormat),
       groupMembersCanUseTools: this.getSetting('groupMembersCanUseTools', defaults.groupMembersCanUseTools),
       groupMembersCanReceiveMedia: this.getSetting('groupMembersCanReceiveMedia', defaults.groupMembersCanReceiveMedia),
       groupMembersCanReadMedia: this.getSetting('groupMembersCanReadMedia', defaults.groupMembersCanReadMedia),
@@ -827,4 +833,10 @@ export class QQChatDatabase {
   finishOutbox(id: number, error: string | null = null): void {
     this.db.prepare('UPDATE outbox SET status=?,sent_at=?,error=? WHERE id=?').run(error ? 'failed' : 'sent', now(), error, id)
   }
+}
+
+function normalizeReplyFormat(value: unknown, fallback: QQChatRuntimeSettings['directReplyFormat']): QQChatRuntimeSettings['directReplyFormat'] {
+  if (value === 'markdown' || value === 'compat') return value
+  // Older releases persisted the automatic “smart” mode. Its explicit replacement is Markdown.
+  return value === 'smart' ? 'markdown' : fallback
 }
