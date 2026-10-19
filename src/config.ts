@@ -8,7 +8,7 @@ const DEFAULT_CONFIG = Object.freeze({
   groupChatEnabled: true,
   groupRequiresAt: true,
   groupReadEnabled: true,
-  replyFormat: 'smart' as ReplyFormat,
+  replyFormat: 'markdown' as ReplyFormat,
   recentGroupMessages: 40,
   reflectionIdleMs: 900_000,
   reflectionBatchSize: 20,
@@ -19,9 +19,7 @@ const DEFAULT_CONFIG = Object.freeze({
 
 export function resolveConfig(input: QQChatConfigInput = {}): QQChatConfig {
   const home = process.env.DSH_HOME || join(homedir(), '.dsh')
-  const replyFormat: ReplyFormat = ['smart', 'markdown', 'compat'].includes(input.replyFormat ?? '')
-    ? input.replyFormat as ReplyFormat
-    : DEFAULT_CONFIG.replyFormat
+  const replyFormat: ReplyFormat = input.replyFormat === 'compat' ? 'compat' : 'markdown'
 
   return Object.freeze({
     dataDir: resolve(input.dataDir || join(home, 'plugins', 'dsh-qqchat')),
@@ -54,7 +52,6 @@ export function defaultRuntimeSettings(config: QQChatConfig): QQChatRuntimeSetti
     groupReceiveMode,
     groupReplyFormat: 'compat',
     directReplyFormat: config.replyFormat,
-    directStreamingEnabled: config.replyFormat !== 'compat',
     groupMembersCanUseTools: false,
     groupMembersCanReceiveMedia: true,
     groupMembersCanReadMedia: false,

@@ -2,6 +2,26 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { QQApiClient } from '../src/gateway/api.js'
 
+test('normal sends use only the selected Markdown or plain compatibility format', async () => {
+  const requests: Array<Record<string, unknown>> = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    if (String(input).includes('/app/getAppAccessToken')) return response({ access_token: 'token', expires_in: 3600 })
+    requests.push(JSON.parse(String(init?.body || '{}')) as Record<string, unknown>)
+    return response({})
+  }) as typeof fetch
+  try {
+    const api = new QQApiClient({} as never, { replyFormat: 'markdown' } as never)
+    const account = { id: 1, app_id: 'app', app_secret: 'secret', sandbox: false } as never
+    await api.sendText(account, 'user-1', '**markdown**', { format: 'markdown' })
+    await api.sendText(account, 'user-1', '# plain text', { format: 'compat' })
+    assert.deepEqual(requests.map(body => body.msg_type), [2, 0])
+    assert.deepEqual(requests.map(body => body.content), [undefined, '# plain text'])
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 test('private text stream sends start and finish parts with one stream id', async () => {
   const requests: Array<{ url: string; body: Record<string, unknown> }> = []
   const originalFetch = globalThis.fetch
@@ -12,14 +32,15 @@ test('private text stream sends start and finish parts with one stream id', asyn
     return response(requests.length === 1 ? { stream_msg_id: 'stream-1' } : {})
   }) as typeof fetch
   try {
-    const api = new QQApiClient({} as never, { replyFormat: 'compat' } as never)
-    const stream = api.createPrivateTextStream({ id: 1, app_id: 'app', app_secret: 'secret', sandbox: false } as never, 'user-1', { messageId: 'incoming-1', format: 'compat' })
+    const api = new QQApiClient({} as never, { replyFormat: 'markdown' } as never)
+    const stream = api.createPrivateTextStream({ id: 1, app_id: 'app', app_secret: 'secret', sandbox: false } as never, 'user-1', { messageId: 'incoming-1' })
     stream.push('你好')
     await stream.finish('你好，世界')
     assert.equal(requests.length, 2)
     assert.deepEqual(requests.map(item => item.body.input_state), [1, 10])
     assert.deepEqual(requests.map(item => item.body.input_mode), ['replace', 'replace'])
     assert.equal(requests[0]?.body.content_raw, '你好，世界')
+    assert.equal(requests[0]?.body.content_type, 'markdown')
     assert.equal(requests[1]?.body.content_raw, '你好，世界')
     assert.equal(requests[0]?.body.msg_id, 'incoming-1')
     assert.equal(requests[0]?.body.event_id, 'incoming-1')
@@ -39,10 +60,10 @@ test('private text streams use fresh msg_seq values across replies', async () =>
     return response({ stream_msg_id: `stream-${requests.length}` })
   }) as typeof fetch
   try {
-    const api = new QQApiClient({} as never, { replyFormat: 'compat' } as never)
+    const api = new QQApiClient({} as never, { replyFormat: 'markdown' } as never)
     const account = { id: 1, app_id: 'app', app_secret: 'secret', sandbox: false } as never
-    const first = api.createPrivateTextStream(account, 'user-1', { messageId: 'incoming-1', format: 'compat' })
-    const second = api.createPrivateTextStream(account, 'user-1', { messageId: 'incoming-2', format: 'compat' })
+    const first = api.createPrivateTextStream(account, 'user-1', { messageId: 'incoming-1' })
+    const second = api.createPrivateTextStream(account, 'user-1', { messageId: 'incoming-2' })
     await first.finish('第一条')
     await second.finish('第二条')
     assert.notEqual(requests[0]?.body.msg_seq, requests[2]?.body.msg_seq)
@@ -60,11 +81,11 @@ test('queued private stream updates receive the stream id from the first respons
     return response(requests.length === 1 ? { id: 'stream-queued' } : {})
   }) as typeof fetch
   try {
-    const api = new QQApiClient({} as never, { replyFormat: 'compat' } as never)
+    const api = new QQApiClient({} as never, { replyFormat: 'markdown' } as never)
     const stream = api.createPrivateTextStream(
       { id: 1, app_id: 'app', app_secret: 'secret', sandbox: false } as never,
       'user-1',
-      { messageId: 'incoming-queued', format: 'compat' },
+      { messageId: 'incoming-queued' },
     )
     stream.push('a'.repeat(120))
     stream.push('b'.repeat(120))

@@ -13,7 +13,7 @@ export interface DailyEntry {
     date: string;
     note: string;
 }
-export type ReplyFormat = 'smart' | 'markdown' | 'compat';
+export type ReplyFormat = 'markdown' | 'compat';
 export type GroupReceiveMode = 'auto' | 'mention' | 'silent';
 export type GatewayStatus = 'offline' | 'connecting' | 'online' | 'error';
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -58,7 +58,6 @@ export interface QQChatRuntimeSettings {
     groupReceiveMode: GroupReceiveMode;
     groupReplyFormat: ReplyFormat;
     directReplyFormat: ReplyFormat;
-    directStreamingEnabled: boolean;
     groupMembersCanUseTools: boolean;
     groupMembersCanReceiveMedia: boolean;
     groupMembersCanReadMedia: boolean;
@@ -70,7 +69,6 @@ export interface QQChatRuntimeSettingsPatch {
     groupReceiveMode?: GroupReceiveMode;
     groupReplyFormat?: ReplyFormat;
     directReplyFormat?: ReplyFormat;
-    directStreamingEnabled?: boolean;
     groupMembersCanUseTools?: boolean;
     groupMembersCanReceiveMedia?: boolean;
     groupMembersCanReadMedia?: boolean;

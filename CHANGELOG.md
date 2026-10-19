@@ -2,7 +2,25 @@
 
 本文件记录当前分支相对 `main` 的用户可见变化。内部同步探针、临时文件和实现重排已合并到对应的维护项中。
 
-## 未发布
+## 0.2.7 · 2026-10-19
+
+### 消息格式与流式回复
+
+- 移除“智能兼容”选项，只保留 Markdown 和纯文本兼容；旧设置中的智能模式迁移为 Markdown。
+- 私聊选择 Markdown 时默认使用 QQ 官方流式回复；纯文本兼容使用普通发送，并移除单独的流式开关。
+
+### DSH 兼容性
+
+- Agent 需要回复的 QQ 消息改由原生 Agent turn 写入，不再抢在首次 `system/message` 之前追加 `user/message`；命令和不触发 Agent 的消息仍作为 QQ transcript 记录。
+- 插件声明最低 DSH 版本为 `0.1.6-alpha.1`，不再因 DSH 发布新版本而被旧的 peer dependency 范围误判为不兼容；这只放宽加载检查，不代表插件 API 与任意新版 DSH 均兼容。
+- 更新 Connection RPC 注入补丁，使用新版 Web profile 的 `webStartup` 服务名，并保留 `webServer`，避免启动时因旧服务名导致插件无法加载。
+
+### 发布流程
+
+- 新增 GitHub Actions 正式 Release 自动发布到 npm；发布前验证 tag 与包版本一致，并运行 typecheck、测试和构建。
+- 使用 npm Trusted Publishing（OIDC），无需在 GitHub 仓库保存长期 npm 发布令牌。
+
+## 0.2.6 · 2026-09-16
 
 ### DSH 0.1.6 兼容性
 
