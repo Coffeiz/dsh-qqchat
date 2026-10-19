@@ -7,7 +7,7 @@
 <p>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/DSH-0.1.6--alpha.1-6f42c1.svg" alt="DSH 0.1.6-alpha.1">
-  <img src="https://img.shields.io/badge/QQChat-0.2.6-2ea44f.svg" alt="QQChat 0.2.6">
+  <img src="https://img.shields.io/badge/QQChat-0.2.7-2ea44f.svg" alt="QQChat 0.2.7">
   <img src="https://img.shields.io/badge/TypeScript-5.x-3178c6.svg" alt="TypeScript">
 </p>
 
