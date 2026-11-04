@@ -6,7 +6,7 @@
 
 <p>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License"></a>
-  <img src="https://img.shields.io/badge/DSH-0.2.1--rc.2-6f42c1.svg" alt="DSH 0.2.1-rc.2">
+  <img src="https://img.shields.io/badge/DSH-0.2.2--alpha.3-6f42c1.svg" alt="DSH 0.2.2-alpha.3">
   <img src="https://img.shields.io/badge/QQChat-0.2.8-2ea44f.svg" alt="QQChat 0.2.8">
   <img src="https://img.shields.io/badge/TypeScript-5.x-3178c6.svg" alt="TypeScript">
 </p>
@@ -18,7 +18,7 @@
 
 <p><em>Chat in QQ, then view the complete Session, memory and tool activity in DSH Web.</em></p>
 
-<p>This release is verified against DSH <code>0.2.1-rc.2</code>. Install the plugin as-is; no DSH source patch or rebuild is required.</p>
+<p>This release is verified against DSH <code>0.2.2-alpha.3</code>. Install the plugin as-is; no DSH source patch or rebuild is required.</p>
 
 `dsh-qqchat` is an official QQ Bot plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). It maps QQ groups and direct chats to ordinary DSH Sessions and uses DSH's native Conversation, Agent, command and tool surfaces.
 
