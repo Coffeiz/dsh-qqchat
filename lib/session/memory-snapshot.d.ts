@@ -24,4 +24,4 @@ export interface MemorySnapshotEvent {
 }
 export declare function memorySnapshotHash(text: string): string;
 export declare function shouldRefreshMemorySnapshot(previous: MemorySnapshotState | undefined, currentText: string, now: number, ttlMs?: number): boolean;
-export declare function restoreMemorySnapshotState(events: readonly MemorySnapshotEvent[], sourcePlugin: string): MemorySnapshotState | undefined;
+export declare function restoreMemorySnapshotState(events: readonly MemorySnapshotEvent[], sourceKind: string, legacySourcePlugin?: string): MemorySnapshotState | undefined;

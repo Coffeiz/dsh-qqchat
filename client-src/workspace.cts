@@ -135,7 +135,7 @@ export function createQQMessageDefinition(): Record<string, unknown> {
   return {
     kind: 'qqchat-message',
     target: 'chat',
-    match: (event: { type?: string; data?: QQEventData }) => event.type === 'qqchat/message' && event.data
+    match: (event: { type?: string; data?: QQEventData }) => (event.type === 'plugin:qqchat/message' || event.type === 'qqchat/message') && event.data
       ? { id: event.data.messageId, role: 'start' }
       : null,
     start: (_context: unknown, match: { event: { data: QQEventData } }) => match.event.data,

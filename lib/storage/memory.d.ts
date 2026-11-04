@@ -1,6 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { QQChatDatabase } from './db.js';
-import type { GroupRow, LoggerLike, MemoryDocuments, MemoryView, QQChatConfig, ReflectionPayload, MemberBatchReflectionPayload, QQNormalizedMessage } from '../types.js';
+import type { GroupRow, LoggerLike, MemoryDocuments, MemoryView, QQChatConfig, ReflectionPayload, MemberBatchReflectionPayload } from '../types.js';
 interface MemberReflectionPayload {
     profile_add?: unknown;
     profile_remove?: unknown;
@@ -63,7 +63,6 @@ export declare class MemoryEngine {
         platform_user_id: string;
         display_name: string | null;
     }): string;
-    currentMessageText(message: QQNormalizedMessage): string;
     memoryView(groupId: number): MemoryView | undefined;
 }
 export declare function memorySystemPrompt(): string;

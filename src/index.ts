@@ -14,23 +14,32 @@ import { QQApiClient } from './gateway/api.js'
 import { QQBindService } from './gateway/auth.js'
 import { createQQChatRpc } from './transport/rpc.js'
 import { QQChatRuntime } from './session/runtime.js'
-import { registerQQChatSessionEventType } from './session/registration.js'
+import { loadQQChatPluginRecordWriters } from './session/registration.js'
+import { runMigrations } from './migrations/index.js'
+import type { QQChatPersistence } from './migrations/qqchat-display-events.js'
 import type { LoggerLike, QQChatConfigInput } from './types.js'
 
-const qqChatSessionEventRegistrations = await registerQQChatSessionEventType()
+const qqChatPluginRecordWriters = await loadQQChatPluginRecordWriters()
 
 export const name = 'dsh-qqchat'
-export const inject = ['connection', 'agents', 'agentDefaultModel', 'commands', 'llm', 'tools', 'webServer', 'workspaceRegistry'] as const
+export const inject = ['connection', 'agents', 'agentDefaultModel', 'commands', 'llm', 'tools', 'webServer', 'workspaceRegistry', 'sessionPersistence'] as const
 
-export function apply(ctx: Context, inputConfig: QQChatConfigInput = {}): void {
+export async function apply(ctx: Context, inputConfig: QQChatConfigInput = {}): Promise<void> {
   const config = resolveConfig(inputConfig)
   mkdirSync(config.dataDir, { recursive: true, mode: 0o700 })
-  const db = new QQChatDatabase(join(config.dataDir, 'qqchat.sqlite'))
   const baseLogger = (ctx as unknown as { logger?: LoggerLike }).logger || console
   const logger = new QQChatLogger(baseLogger)
-  if (qqChatSessionEventRegistrations === 0) {
-    logger.warn?.('[dsh-qqchat] 未找到可注册的 DSH Session 事件表，旧 QQChat Session 恢复可能需要新建 Session')
+  if (qqChatPluginRecordWriters === 0) {
+    logger.warn?.('[dsh-qqchat] 当前 DSH 未导出插件记录 API；被动消息仍保存在 QQ 数据库，不写入不兼容的 Session 事件')
   }
+  const persistence = (ctx as unknown as { sessionPersistence?: QQChatPersistence }).sessionPersistence
+  if (persistence) {
+    await runMigrations(persistence, logger)
+  } else {
+    logger.warn?.('[dsh-qqchat] 当前 DSH 未提供 Session 持久化服务，跳过旧 Session 迁移')
+  }
+
+  const db = new QQChatDatabase(join(config.dataDir, 'qqchat.sqlite'))
   const api = new QQApiClient(db, config)
   const auth = new QQBindService(db, config)
   const memory = new MemoryEngine(ctx, db, config, logger)
