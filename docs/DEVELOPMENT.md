@@ -23,14 +23,14 @@ QQChat 是 TypeScript 插件，Host 和 Client 一起构建。日常开发不需
 3. 插件 `npm run check` 能独立通过。
 4. 启动 DSH Web 后，插件 Host、Client 和设置页都能正常加载。
 
-当前已知的宿主兼容边界见[架构说明](./ARCHITECTURE.md)和[媒体与引用方案](./MEDIA_AND_QUOTES.md)：自定义 `qqchat/message` 展示事件不属于官方 DSH 的标准 Agent 事件，插件会在加载时自动注册事件类型；若特殊打包环境无法找到宿主事件表，才会触发新建 Session 的降级，QQ 完整历史仍由自身 SQLite 保存。该兼容层不要求用户修改 DSH。
+当前已知的宿主兼容边界见[架构说明](./ARCHITECTURE.md)、[媒体与引用方案](./MEDIA_AND_QUOTES.md)和[Session 迁移说明](./SESSION_MIGRATIONS.md)：被动 QQ 消息以 DSH 可忽略的 `plugin:qqchat/message` 记录保存，不进入模型上下文；旧版本遗留的 `qqchat/message` 会在插件启动时迁移。迁移只处理 QQChat Session 当前选中的存储代际，原文件保留在同目录备份中，历史代际仍由 DSH 管理。
 
 ## 当前功能兼容矩阵
 
 | 功能 | DSH 原生支持情况 | 插件行为 |
 | --- | --- | --- |
 | QQ 文本消息与独立 Session | 无 QQ 协议支持 | 转换为 DSH 标准 user message，并保留 QQ 身份元数据 |
-| 群友静默记录、未 @ 消息展示 | 无 QQ 自定义展示事件 | 使用插件 Client 渲染 `qqchat/message`；不送入模型 |
+| 群友静默记录、未 @ 消息展示 | 无 QQ 自定义展示事件 | 使用可忽略插件记录 `plugin:qqchat/message`，由插件 Client 渲染；不送入模型 |
 | 图片输入 | 取决于当前 DSH 模型路由和附件服务 | 使用 DSH 原生图片块；不支持视觉时使用稳定文本降级和读取工具 |
 | 音频、视频和普通文件 | DSH 不提供统一的 QQ 媒体理解能力 | 保存附件并提供类型提示、文件工具或媒体信息工具 |
 | QQ 私聊流式回复 | DSH 不负责 QQ Gateway 流式协议 | Markdown 格式自动使用 QQ 官方流式接口；纯文本兼容格式使用普通发送；失败时按已发送帧安全回退 |

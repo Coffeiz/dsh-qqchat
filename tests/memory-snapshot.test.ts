@@ -33,3 +33,12 @@ test('restored snapshot ignores DSH runtime context with the same plugin source'
   assert.equal(state?.hash, memorySnapshotHash('qq memory'))
   assert.equal(state?.lastInjectedAt, 100)
 })
+
+test('restores producer-owned QQ memory source and legacy wrapped snapshots', () => {
+  const state = restoreMemorySnapshotState([
+    { type: 'user/message', time: 100, data: { source: { kind: 'plugin', plugin: '@deepseek-ai/dsh-system-prompt', sections: [{ name: 'qq-chat-context' }] }, content: [{ type: 'text', text: 'legacy memory' }] } },
+    { type: 'user/message', time: 200, data: { source: { kind: 'qq-chat-memory', sections: [{ name: 'qq-chat-context' }] }, content: [{ type: 'text', text: 'current memory' }] } },
+  ], 'qq-chat-memory', '@deepseek-ai/dsh-system-prompt')
+  assert.equal(state?.hash, memorySnapshotHash('current memory'))
+  assert.equal(state?.lastInjectedAt, 200)
+})

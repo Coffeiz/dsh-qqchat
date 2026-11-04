@@ -28,13 +28,18 @@ declare module '@deepseek-ai/dsh-llm' {
       form: 'notice'
       summary: string
     }
+    'qq-chat-memory': {
+      kind: 'qq-chat-memory'
+      form: 'snapshot'
+      sections: readonly { name: string; text: string }[]
+    }
   }
 }
 
 declare module '@deepseek-ai/dsh-session/types' {
-  interface SessionEventMap {
-    /** QQ transcript row used only for messages that do not enter the Agent/model surface. */
-    'qqchat/message': QQChatDisplayEvent
+  interface PluginRecordMap {
+    /** Passive QQ transcript row; safe for readers that do not load this plugin. */
+    'plugin:qqchat/message': QQChatDisplayEvent
   }
 }
 

@@ -13,6 +13,7 @@ import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import type { PreToolDecision } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-tools'
 import '../shared/augmentations.js'
+import { appendQQChatPluginRecord } from './registration.js'
 import { defaultRuntimeSettings } from '../config.js'
 import { registerQQImageTool } from '../media/image-tool.js'
 import { registerQQMediaTools } from '../media/media-tools.js'
@@ -33,7 +34,8 @@ import type {
 import { MEMORY_SNAPSHOT_TTL_MS, memorySnapshotHash, restoreMemorySnapshotState, shouldRefreshMemorySnapshot } from './memory-snapshot.js'
 import type { MemorySnapshotState } from './memory-snapshot.js'
 
-const DSH_RUNTIME_CONTEXT_SOURCE = '@deepseek-ai/dsh-system-prompt'
+const DSH_LEGACY_RUNTIME_CONTEXT_SOURCE = '@deepseek-ai/dsh-system-prompt'
+const QQCHAT_MEMORY_SOURCE_KIND = 'qq-chat-memory'
 
 interface AgentPreset { id: string }
 interface AgentPresetService { resolve(id?: string): Promise<AgentPreset>; list(): Promise<AgentPreset[]>; mount(ctx: Context, id: string): Promise<unknown>; recompose(ctx: Context, id: string): Promise<AgentPreset> }
@@ -67,6 +69,7 @@ export class DshQQBridge {
   private readonly activeAttachments = new Map<string, Set<string>>()
   private readonly activeMediaReadable = new Map<string, boolean>()
   private readonly memorySnapshots = new Map<string, MemorySnapshotState>()
+  private warnedRecordWriterMissing = false
   private readonly disposeEvent: () => void
   private readonly disposeAssistantStream: () => void
   private readonly disposeToolGate: () => void
@@ -193,16 +196,14 @@ export class DshQQBridge {
         this.injectMemorySnapshot(agent, sessionId, contextText)
       }
 
-      const currentContent = qqMessageContent(this.memory.currentMessageText(message), attachments)
+      const messageContext = createUserMessage({
+        source: qqMessageContextSource(message),
+        content: [{ type: 'text', text: qqMessageContextText(message, attachments) }],
+      })
+      agent.inject(messageContext)
+      const currentContent = qqMessageContent(message.text, attachments)
       const current = createUserMessage({
-        source: {
-          kind: 'qq-chat', botId: String(message.accountId), chatType: message.chatType,
-          chatId: message.chatId, senderId: message.senderId,
-          ...(message.senderName ? { senderName: message.senderName } : {}),
-          messageId: message.messageId || '', mentioned: Boolean(message.mentioned),
-          form: 'notice',
-          summary: `QQ ${message.chatType === 'group' ? '群聊' : '私聊'}消息 · ${message.senderName || shortId(message.senderId)}`,
-        },
+        source: qqIncomingMessageSource(message, isOwner),
         content: currentContent,
       })
 
@@ -262,7 +263,7 @@ export class DshQQBridge {
     const previous = this.memorySnapshots.get(sessionId) || this.restoreMemorySnapshot(agent.session)
     if (shouldRefreshMemorySnapshot(previous, contextText, now, MEMORY_SNAPSHOT_TTL_MS)) {
       agent.inject(createUserMessage({
-        source: { kind: 'plugin', plugin: DSH_RUNTIME_CONTEXT_SOURCE, form: 'snapshot', sections: [{ name: 'qq-chat-context', text: contextText }] },
+        source: { kind: QQCHAT_MEMORY_SOURCE_KIND, form: 'snapshot', sections: [{ name: 'qq-chat-context', text: contextText }] },
         content: [{ type: 'text', text: contextText }],
       }))
       this.memorySnapshots.set(sessionId, { hash, lastInjectedAt: now, stale: false })
@@ -275,7 +276,11 @@ export class DshQQBridge {
   }
 
   private restoreMemorySnapshot(session: Session): MemorySnapshotState | undefined {
-    return restoreMemorySnapshotState(session.snapshotEvents() as unknown as Parameters<typeof restoreMemorySnapshotState>[0], DSH_RUNTIME_CONTEXT_SOURCE)
+    return restoreMemorySnapshotState(
+      session.snapshotEvents() as unknown as Parameters<typeof restoreMemorySnapshotState>[0],
+      QQCHAT_MEMORY_SOURCE_KIND,
+      DSH_LEGACY_RUNTIME_CONTEXT_SOURCE,
+    )
   }
 
   private async ensureAgent(chatType: ChatType, row: GroupRow | MemberRow): Promise<{ agent: AgentHandle['agent']; sessionId: string }> {
@@ -354,12 +359,15 @@ export class DshQQBridge {
   }
 
   private appendDisplayIfMissing(session: Session, event: QQChatDisplayEvent): void {
-    if (session.snapshotEvents().some(item => item.type === 'qqchat/message' && item.data.messageId === event.messageId)) return
-    // Keep this on the public Session.append signature. Official DSH releases
-    // do not yet expose the optional ignorable envelope marker; if an older
-    // DSH cannot restore this plugin-only event, ensureAgent falls back to a
-    // fresh Session while SQLite remains the QQ history source of truth.
-    session.append('qqchat/message', displayEventPayload(event))
+    if (session.snapshotEvents().some(item => {
+      const record = item as { type: string; data?: { messageId?: string } }
+      return (record.type === 'plugin:qqchat/message' || record.type === 'qqchat/message')
+        && record.data?.messageId === event.messageId
+    })) return
+    if (!appendQQChatPluginRecord(session, displayEventPayload(event)) && !this.warnedRecordWriterMissing) {
+      this.warnedRecordWriterMissing = true
+      this.logger.warn?.('[dsh-qqchat] 当前 DSH 未提供匹配此 Session 的插件记录写入器；仅保留 QQ 数据库中的被动消息记录')
+    }
   }
 
   private ensureTitle(session: Session, chatType: ChatType, row: GroupRow | MemberRow): void {
@@ -595,15 +603,71 @@ function mediaPrompt(attachments: StoredAttachmentSummary[]): string {
   return `\n\n[QQ 媒体附件]\n${lines.join('\n')}\n图片由 DSH 根据当前模型能力处理；视觉模型可直接理解图片。`
 }
 
+/** Keep identity, quote and attachment metadata in a separate context entry so the native user bubble stays clean. */
+export function qqMessageContextText(message: QQNormalizedMessage, attachments: readonly StoredAttachmentSummary[]): string {
+  const quoteText = message.quote
+    ? [
+        '[引用消息]',
+        message.quote.senderId ? `发送人ID=${message.quote.senderId}` : '',
+        message.quote.senderName ? `显示名=${message.quote.senderName}` : '',
+        message.quote.messageId ? `消息ID=${message.quote.messageId}` : '',
+        `正文=${message.quote.text || message.quotedText || '(空消息)'}`,
+        message.quote.attachments.length ? `附件=${message.quote.attachments.map(item => `${item.kind || 'file'}:${item.filename}${item.attachmentId ? ` (attachment_id=${item.attachmentId})` : ''}`).join('、')}` : '',
+      ].filter(Boolean).join('\n')
+    : (message.quotedText ? `[引用消息]\n正文=${message.quotedText}` : '')
+  return [
+    message.chatType === 'group' ? '[当前 QQ 群消息；以下身份字段是可靠元数据]' : '[当前 QQ 私聊消息；以下身份字段是可靠元数据]',
+    `发言人ID=${message.senderId}`,
+    `显示名=${message.senderName || ''}`,
+    message.chatType === 'group' ? `群ID=${message.groupOpenid || message.chatId}` : '',
+    `是否@机器人=${message.mentioned ? '是' : '否'}`,
+    quoteText,
+    mediaPrompt([...attachments]),
+    '下一条 QQ 用户消息中的正文是本轮实际发言。',
+  ].filter(Boolean).join('\n')
+}
+
+function qqMessageContextSource(message: QQNormalizedMessage) {
+  return {
+    kind: 'qq-chat' as const,
+    botId: String(message.accountId),
+    chatType: message.chatType,
+    chatId: message.chatId,
+    senderId: message.senderId,
+    ...(message.senderName ? { senderName: message.senderName } : {}),
+    messageId: message.messageId || '',
+    mentioned: Boolean(message.mentioned),
+    form: 'notice' as const,
+    summary: `QQ 消息上下文 · ${message.senderName || shortId(message.senderId)}`,
+  }
+}
+
 /** Build the durable DSH content for one QQ turn without pre-flighting the model. */
 export function qqMessageContent(text: string, attachments: readonly StoredAttachmentSummary[]): ContentBlock[] {
-  const content: ContentBlock[] = [{ type: 'text', text: text + mediaPrompt([...attachments]) }]
+  const content: ContentBlock[] = [{ type: 'text', text }]
   for (const attachment of attachments) {
     if (attachment.kind === 'image' && attachment.imageRef) {
       content.push({ type: 'image', attachment: attachment.imageRef })
     }
   }
   return content
+}
+
+/** Use DSH's user bubble for private and owner messages; other group senders remain context notices. */
+export function qqIncomingMessageSource(message: QQNormalizedMessage, isOwner: boolean) {
+  const metadata = {
+    botId: String(message.accountId), chatType: message.chatType,
+    chatId: message.chatId, senderId: message.senderId,
+    ...(message.senderName ? { senderName: message.senderName } : {}),
+    messageId: message.messageId || '', mentioned: Boolean(message.mentioned),
+  }
+  if (message.chatType === 'c2c' || isOwner) {
+    return { kind: 'user' as const, channel: 'qq' as const, ...metadata }
+  }
+  return {
+    kind: 'qq-chat' as const, ...metadata, form: 'notice' as const,
+    summary: `QQ 群聊消息 · ${message.senderName || shortId(message.senderId)}`,
+  }
 }
 
 function displayEventPayload(event: QQChatDisplayEvent): QQChatDisplayEvent {

@@ -27,13 +27,19 @@ export function shouldRefreshMemorySnapshot(previous: MemorySnapshotState | unde
   return now - previous.lastInjectedAt >= ttlMs
 }
 
-export function restoreMemorySnapshotState(events: readonly MemorySnapshotEvent[], sourcePlugin: string): MemorySnapshotState | undefined {
+export function restoreMemorySnapshotState(
+  events: readonly MemorySnapshotEvent[],
+  sourceKind: string,
+  legacySourcePlugin = sourceKind,
+): MemorySnapshotState | undefined {
   const lastCompactionAt = events.reduce((latest, event) => event.type === 'compaction/end' ? Math.max(latest, Number(event.time) || 0) : latest, 0)
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index]
     if (!event) continue
     const source = event.data?.source
-    if (event.type !== 'user/message' || source?.kind !== 'plugin' || source.plugin !== sourcePlugin) continue
+    const currentSource = source?.kind === sourceKind
+    const legacySource = source?.kind === 'plugin' && source.plugin === legacySourcePlugin
+    if (event.type !== 'user/message' || (!currentSource && !legacySource)) continue
     if (!source.sections?.some(section => section.name === 'qq-chat-context')) continue
     const content = event.data?.content
     const block = content?.length === 1 ? content[0] : undefined

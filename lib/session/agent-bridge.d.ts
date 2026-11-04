@@ -22,6 +22,7 @@ export declare class DshQQBridge {
     private readonly activeAttachments;
     private readonly activeMediaReadable;
     private readonly memorySnapshots;
+    private warnedRecordWriterMissing;
     private readonly disposeEvent;
     private readonly disposeAssistantStream;
     private readonly disposeToolGate;
@@ -58,5 +59,30 @@ export declare class DshQQBridge {
     private persistedPreset;
     private serial;
 }
+/** Keep identity, quote and attachment metadata in a separate context entry so the native user bubble stays clean. */
+export declare function qqMessageContextText(message: QQNormalizedMessage, attachments: readonly StoredAttachmentSummary[]): string;
 /** Build the durable DSH content for one QQ turn without pre-flighting the model. */
 export declare function qqMessageContent(text: string, attachments: readonly StoredAttachmentSummary[]): ContentBlock[];
+/** Use DSH's user bubble for private and owner messages; other group senders remain context notices. */
+export declare function qqIncomingMessageSource(message: QQNormalizedMessage, isOwner: boolean): {
+    messageId: string;
+    mentioned: boolean;
+    senderName?: string | undefined;
+    botId: string;
+    chatType: ChatType;
+    chatId: string;
+    senderId: string;
+    kind: "user";
+    channel: "qq";
+} | {
+    form: "notice";
+    summary: string;
+    messageId: string;
+    mentioned: boolean;
+    senderName?: string | undefined;
+    botId: string;
+    chatType: ChatType;
+    chatId: string;
+    senderId: string;
+    kind: "qq-chat";
+};
