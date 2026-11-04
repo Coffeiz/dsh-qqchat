@@ -51,6 +51,28 @@ test('private text stream sends start and finish parts with one stream id', asyn
   }
 })
 
+test('private text stream closes the confirmed prefix instead of rewriting it at finalization', async () => {
+  const requests: Array<{ body: Record<string, unknown> }> = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    if (String(input).includes('/app/getAppAccessToken')) return response({ access_token: 'token', expires_in: 3600 })
+    requests.push({ body: JSON.parse(String(init?.body || '{}')) as Record<string, unknown> })
+    return response({ stream_msg_id: 'stream-prefix' })
+  }) as typeof fetch
+  try {
+    const api = new QQApiClient({} as never, { replyFormat: 'markdown' } as never)
+    const stream = api.createPrivateTextStream({ id: 1, app_id: 'app', app_secret: 'secret', sandbox: false } as never, 'user-1')
+    stream.push('已送达草稿')
+    await new Promise(resolve => setTimeout(resolve, 520))
+    await assert.rejects(stream.finish('完全不同的最终正文'), /改写了已送达前缀/)
+    assert.deepEqual(requests.map(item => item.body.input_state), [1, 10])
+    assert.deepEqual(requests.map(item => item.body.content_raw), ['已送达草稿', '已送达草稿'])
+    assert.equal(stream.hasSent(), true)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 test('private text streams use fresh msg_seq values across replies', async () => {
   const requests: Array<{ body: Record<string, unknown> }> = []
   const originalFetch = globalThis.fetch

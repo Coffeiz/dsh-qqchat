@@ -239,6 +239,15 @@ export class QQApiClient {
         finished = true
         if (timer) clearTimeout(timer)
         timer = undefined
+        // QQ 可能拒绝改写已接受正文的 replace 帧。先排空队列，只允许在已确认前缀后续写。
+        // 若模型定稿与此前缀不一致，则用最后确认的正文关闭流并报告部分送达；
+        // 不再发送完整普通回复，以免重复展示已送达内容。
+        await chain
+        if (lastSentText && !text.startsWith(lastSentText)) {
+          await enqueue(10, lastSentText)
+          await chain
+          throw new Error('QQ 流式定稿改写了已送达前缀，已保留并关闭最后确认内容')
+        }
         fullText = text
         await flush(1)
         await chain
