@@ -7,7 +7,7 @@
 <p>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/DSH-0.2.2--alpha.3-6f42c1.svg" alt="DSH 0.2.2-alpha.3">
-  <img src="https://img.shields.io/badge/QQChat-0.2.9-2ea44f.svg" alt="QQChat 0.2.9">
+  <img src="https://img.shields.io/badge/QQChat-0.2.10-2ea44f.svg" alt="QQChat 0.2.10">
   <img src="https://img.shields.io/badge/TypeScript-5.x-3178c6.svg" alt="TypeScript">
 </p>
 
@@ -103,7 +103,7 @@ Memory is injected through DSH's official runtime-context snapshot mechanism, so
 
 We recommend installing from the DSH Plugins page: open **Plugins -> Add plugin**, enter `dsh-qqchat`, and select **Install**. DSH installs it into the current deployment; no command-line installation is needed.
 
-The current stable npm release is `0.2.9`. This release fixes activation failures caused by the missing runtime dependency `@deepseek-ai/dsh-agent-presets` after installation.
+The current plugin version is `0.2.10`. Group and direct-chat message context now labels the speaker, message time, and body explicitly.
 
 Git installs use the committed `lib/` runtime artifacts, so they do not need to run
 an install-time build. For local development:
@@ -200,7 +200,7 @@ QQ Sessions use DSH's native Agent Preset mechanism. The preset configured for t
 ## Notes
 
 - An official QQ Bot is required; personal QQ account login is not supported.
-- The current version is `0.2.9`, verified against DSH `0.2.2-alpha.3`.
+- The current version is `0.2.10`, verified against DSH `0.2.2-alpha.3`.
 - Rich media, full QQ emoji handling and some complex message formats may require compatibility mode.
 - Uninstalling the plugin does not automatically delete saved chat or memory data.
 

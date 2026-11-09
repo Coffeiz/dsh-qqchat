@@ -7,7 +7,7 @@
 <p>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/DSH-0.2.2--alpha.3-6f42c1.svg" alt="DSH 0.2.2-alpha.3">
-  <img src="https://img.shields.io/badge/QQChat-0.2.9-2ea44f.svg" alt="QQChat 0.2.9">
+  <img src="https://img.shields.io/badge/QQChat-0.2.10-2ea44f.svg" alt="QQChat 0.2.10">
   <img src="https://img.shields.io/badge/TypeScript-5.x-3178c6.svg" alt="TypeScript">
 </p>
 
@@ -80,7 +80,7 @@
 
 推荐从 DSH 插件页面安装：打开 **插件 → 添加插件**，输入 `dsh-qqchat` 并选择安装。DSH 会将插件安装到当前部署中；无需在命令行安装。
 
-当前 npm 稳定版为 `0.2.9`。本版本修复了插件安装后缺少 `@deepseek-ai/dsh-agent-presets` 运行时依赖、导致插件无法激活的问题。
+当前插件版本为 `0.2.10`。群聊和私聊消息上下文现在会明确标注发言人、消息时间和正文。
 
 ## 第一次连接 QQ
 
@@ -185,7 +185,7 @@ QQ Session 使用 DSH 原生的 Agent Preset 机制。插件配置中的 preset 
 ## 注意事项
 
 - 需要 QQ 官方 Bot，不支持个人 QQ 账号登录。
-- 当前版本为 `0.2.9`，基于 DSH `0.2.2-alpha.3` 验证。
+- 当前版本为 `0.2.10`，基于 DSH `0.2.2-alpha.3` 验证。
 - 富媒体、完整 QQ 表情和部分复杂消息格式可能需要使用兼容模式。
 - 卸载插件不会自动删除已经保存的聊天和记忆数据。
 
