@@ -16,3 +16,14 @@ test('session preset resolution prefers the latest persisted selection', () => {
 test('session preset resolution falls back to the creation header', () => {
   assert.equal(resolveQQSessionPreset(header, []), 'default')
 })
+
+test('session preset resolution skips malformed selection event data', () => {
+  const events = [
+    { type: 'agent-preset/selected', seq: 1, time: 1 },
+    { type: 'agent-preset/selected', seq: 2, time: 2, data: null },
+    { type: 'agent-preset/selected', seq: 3, time: 3, data: { agentPreset: 'code' } },
+    { type: 'agent-preset/selected', seq: 4, time: 4, data: { agentPreset: 42 } },
+  ] as unknown as SessionEvent[]
+
+  assert.equal(resolveQQSessionPreset(header, events), 'code')
+})

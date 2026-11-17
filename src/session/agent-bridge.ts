@@ -50,9 +50,9 @@ interface ActiveActor { chatType: ChatType; senderId: string }
 export function resolveQQSessionPreset(header: Session['header'], events: readonly SessionEvent[]): string | undefined {
   let current = header.agentPreset ?? null
   for (const event of events) {
-    if (event.type === 'agent-preset/selected' && typeof event.data.agentPreset === 'string') {
-      current = event.data.agentPreset
-    }
+    if (event.type !== 'agent-preset/selected' || typeof event.data !== 'object' || event.data === null) continue
+    const preset = (event.data as { agentPreset?: unknown }).agentPreset
+    if (typeof preset === 'string') current = preset
   }
   return current || undefined
 }
