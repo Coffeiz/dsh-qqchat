@@ -3,7 +3,6 @@ import { createRequire } from 'node:module'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { AgentHandle, AgentOptions, AgentSetup, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
-import { agentPresetProjectionDefinition } from '@deepseek-ai/dsh-agent-presets'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { CommandInvocation, CommandRuntime, CommandResult } from '@deepseek-ai/dsh-commands'
@@ -49,8 +48,12 @@ interface Composition { presetId?: string; setup?: AgentSetup }
 interface ActiveActor { chatType: ChatType; senderId: string }
 
 export function resolveQQSessionPreset(header: Session['header'], events: readonly SessionEvent[]): string | undefined {
-  let current = agentPresetProjectionDefinition.init(header)
-  for (const event of events) current = agentPresetProjectionDefinition.apply(current, event)
+  let current = header.agentPreset ?? null
+  for (const event of events) {
+    if (event.type === 'agent-preset/selected' && typeof event.data.agentPreset === 'string') {
+      current = event.data.agentPreset
+    }
+  }
   return current || undefined
 }
 

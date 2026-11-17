@@ -37,6 +37,11 @@ declare module '@deepseek-ai/dsh-llm' {
 }
 
 declare module '@deepseek-ai/dsh-session/types' {
+  interface SessionEventMap {
+    /** Agent Preset selection recorded before a QQ Session starts its first turn. */
+    'agent-preset/selected': { agentPreset: string }
+  }
+
   interface PluginRecordMap {
     /** Passive QQ transcript row; safe for readers that do not load this plugin. */
     'plugin:qqchat/message': QQChatDisplayEvent

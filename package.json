@@ -1,6 +1,6 @@
 {
   "name": "dsh-qqchat",
-  "version": "0.2.10",
+  "version": "0.2.11",
   "description": "DeepSeek Harness 的 QQ 私聊/群聊插件，支持扫码授权、原生 Session、群记忆与工具权限。",
   "type": "module",
   "license": "MIT",
@@ -43,22 +43,21 @@
     "prepublishOnly": "npm run check"
   },
   "dependencies": {
-    "@deepseek-ai/dsh-agent-presets": "^0.1.6-alpha.1",
     "qrcode": "^1.5.4"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-attachment": "^0.1.6-alpha.1",
-    "@deepseek-ai/dsh-agent": "^0.1.6-alpha.1",
-    "@deepseek-ai/dsh-commands": "^0.1.6-alpha.1",
-    "@deepseek-ai/dsh-client-connection": "^0.1.6-alpha.1",
-    "@deepseek-ai/dsh-client-modules": "^0.1.6-alpha.1",
-    "@deepseek-ai/dsh-client-ui-conversation": "^0.1.6-alpha.1",
-    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.6-alpha.1",
-    "@deepseek-ai/dsh-client-ui-settings": "^0.1.6-alpha.1",
-    "@deepseek-ai/dsh-llm": "^0.1.6-alpha.1",
-    "@deepseek-ai/dsh-session": "^0.1.6-alpha.1",
-    "@deepseek-ai/dsh-tools": "^0.1.6-alpha.1"
+    "@deepseek-ai/dsh-attachment": "*",
+    "@deepseek-ai/dsh-agent": "*",
+    "@deepseek-ai/dsh-commands": "*",
+    "@deepseek-ai/dsh-client-connection": "*",
+    "@deepseek-ai/dsh-client-modules": "*",
+    "@deepseek-ai/dsh-client-ui-conversation": "*",
+    "@deepseek-ai/dsh-client-ui-primitives": "*",
+    "@deepseek-ai/dsh-client-ui-settings": "*",
+    "@deepseek-ai/dsh-llm": "*",
+    "@deepseek-ai/dsh-session": "*",
+    "@deepseek-ai/dsh-tools": "*"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh-client-connection": {
