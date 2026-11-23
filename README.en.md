@@ -272,6 +272,14 @@ tests/                    automated tests
 
 See [docs/ARCHITECTURE.en.md](./docs/ARCHITECTURE.en.md) for the detailed boundaries and data flow.
 
+## Feedback and community
+
+Join the QQ group to discuss dsh-qqchat and Gugu-web. You can also report issues through [GitHub Issues](https://github.com/Coffeiz/dsh-qqchat/issues).
+
+<p align="center">
+  <img src="docs/assets/QQFeedbackGroup.png" alt="QQ feedback group QR code" width="260">
+</p>
+
 ## License
 
 This project is released under the [MIT License](./LICENSE).

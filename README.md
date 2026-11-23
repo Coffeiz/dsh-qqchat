@@ -211,6 +211,14 @@ npm run check
 - [安全边界](./docs/SECURITY.md)
 - [架构说明](./docs/ARCHITECTURE.md)
 
+## 反馈与交流
+
+欢迎加入 QQ 反馈群，交流 dsh-qqchat 和 Gugu-web。问题也可以通过 [GitHub Issues](https://github.com/Coffeiz/dsh-qqchat/issues) 提交。
+
+<p align="center">
+  <img src="docs/assets/QQFeedbackGroup.png" alt="QQ 反馈群二维码" width="260">
+</p>
+
 ## License
 
 本项目使用 [MIT License](./LICENSE)。
