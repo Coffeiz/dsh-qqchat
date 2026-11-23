@@ -7,7 +7,7 @@
 <p>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/DSH-0.2.2--alpha.3-6f42c1.svg" alt="DSH 0.2.2-alpha.3">
-  <img src="https://img.shields.io/badge/QQChat-0.2.11-2ea44f.svg" alt="QQChat 0.2.11">
+  <img src="https://img.shields.io/badge/QQChat-0.2.13-2ea44f.svg" alt="QQChat 0.2.13">
   <img src="https://img.shields.io/badge/TypeScript-5.x-3178c6.svg" alt="TypeScript">
 </p>
 
@@ -103,7 +103,7 @@ Memory is injected through DSH's official runtime-context snapshot mechanism, so
 
 We recommend installing from the DSH Plugins page: open **Plugins -> Add plugin**, enter `dsh-qqchat`, and select **Install**. DSH installs it into the current deployment; no command-line installation is needed.
 
-The current plugin version is `0.2.11`. The installer no longer blocks the plugin based on DSH internal package version ranges. This permits installation attempts; it does not mean every DSH version has been verified as compatible.
+The current plugin version is `0.2.13`. The installer no longer blocks the plugin based on DSH internal package version ranges. This permits installation attempts; it does not mean every DSH version has been verified as compatible.
 
 Git installs use the committed `lib/` runtime artifacts, so they do not need to run
 an install-time build. For local development:
@@ -208,7 +208,7 @@ QQ Sessions use DSH's native Agent Preset mechanism. The preset configured for t
 ## Notes
 
 - An official QQ Bot is required; personal QQ account login is not supported.
-- The current version is `0.2.11`, verified against DSH `0.2.2-alpha.3`.
+- The current version is `0.2.13`, verified against DSH `0.2.2-alpha.3`.
 - Rich media, full QQ emoji handling and some complex message formats may require compatibility mode.
 - Uninstalling the plugin does not automatically delete saved chat or memory data.
 
