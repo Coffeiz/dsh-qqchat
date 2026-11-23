@@ -1,7 +1,9 @@
 import { QQ_FILE_MAX_BYTES } from '../gateway/file-upload.js'
 import { open, readFile } from 'node:fs/promises'
 import type { Context } from '@deepseek-ai/cordis'
-import type { DshQQBridge } from './agent-bridge.js'
+import { basename } from 'node:path'
+import { resolveWorkspaceFile, openWorkspaceFile } from '../media/workspace-file.js'
+import type { DshQQBridge, QQFileSource } from './agent-bridge.js'
 import { defaultRuntimeSettings } from '../config.js'
 import type { QQChatDatabase } from '../storage/db.js'
 import type { QQChatLogger } from '../shared/logging.js'
@@ -284,18 +286,35 @@ export class QQChatRuntime {
       let fileSent = false
       let streamedText = ''
       const fileAttempts = new Map<string, Promise<string>>()
-      const sendFile = (id: string, voice: boolean, signal?: AbortSignal): Promise<string> => {
-        const key = `${voice ? "voice" : "file"}:${id}`
+      const sendFile = async (source: QQFileSource, voice: boolean, signal?: AbortSignal): Promise<string> => {
+        let filePath: string
+        let filename: string
+        let workspaceFile: Awaited<ReturnType<typeof resolveWorkspaceFile>> | undefined
+        let key: string
+        if ('path' in source) {
+          try {
+            workspaceFile = await resolveWorkspaceFile(source.workspace, source.path)
+            filePath = workspaceFile.path
+            filename = basename(filePath)
+            key = `path:${filePath}`
+          } catch {
+            return '只能发送当前 DSH 工作区内可访问的普通文件。'
+          }
+        } else {
+          const attachment = storedAttachments.find(item => item.id === source.attachmentId)
+          if (!attachment?.localPath) return '此附件没有可发送的本地副本。'
+          filePath = attachment.localPath
+          filename = attachment.filename
+          key = `${voice ? 'voice' : 'file'}:${source.attachmentId}`
+        }
         const previous = fileAttempts.get(key)
         if (previous) return previous
-        const attachment = storedAttachments.find(item => item.id === id)
-        if (!attachment?.localPath) return Promise.resolve('此附件没有可发送的本地副本。')
         const attempt = (async () => {
           let delivered = false
           try {
-            const data = await readOutboundAttachment(attachment.localPath!)
+            const data = await readOutboundAttachment(filePath, workspaceFile)
             if (voice) await this.api.sendVoice(account, targetId, data, sendOptions, signal)
-            else await this.api.sendFile(account, targetId, attachment.filename, data, sendOptions, signal)
+            else await this.api.sendFile(account, targetId, filename, data, sendOptions, signal)
             delivered = true
             fileSent = true
             this.db.insertMessage({
@@ -456,9 +475,9 @@ export function indexAttachments(inputs: QQAttachmentInput[], stored: StoredAtta
 }
 
 
-async function readOutboundAttachment(path: string): Promise<Buffer> {
+async function readOutboundAttachment(path: string, workspaceFile?: Awaited<ReturnType<typeof resolveWorkspaceFile>>): Promise<Buffer> {
   try {
-    const file = await open(path, 'r')
+    const file = workspaceFile ? await openWorkspaceFile(workspaceFile) : await open(path, 'r')
     try {
       const stat = await file.stat()
       if (!stat.isFile() || stat.size < 1 || stat.size > QQ_FILE_MAX_BYTES) {
@@ -476,6 +495,6 @@ async function readOutboundAttachment(path: string): Promise<Buffer> {
       await file.close()
     }
   } catch {
-    throw new Error('附件已过期、无法读取或超过 30 MiB')
+    throw new Error('文件不可用、无法读取或超过 30 MiB')
   }
 }

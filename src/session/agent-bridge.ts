@@ -46,6 +46,9 @@ interface WorkspaceRegistryService {
   resolveByPath(path: string): Promise<{ attachSession(sessionId: import('@deepseek-ai/dsh-session').SessionId): Promise<void> } | undefined>
 }
 interface Composition { presetId?: string; setup?: AgentSetup }
+export type QQFileSource = { attachmentId: string } | { path: string; workspace: string }
+type QQFileSender = (source: QQFileSource, voice: boolean, signal?: AbortSignal) => Promise<string>
+
 interface ActiveActor { chatType: ChatType; senderId: string }
 
 export function resolveQQSessionPreset(header: Session['header'], events: readonly SessionEvent[]): string | undefined {
@@ -69,7 +72,7 @@ export class DshQQBridge {
   private readonly routes = new Map<string, { provider: string; model: string }>()
   private readonly selections = new Map<string, { ref: ModelSelectionRef; dispose: () => void }>()
   private readonly pendingResets = new Set<string>()
-  private readonly fileSenders = new Map<string, (id: string, voice: boolean, signal?: AbortSignal) => Promise<string>>()
+  private readonly fileSenders = new Map<string, { send: QQFileSender; workspace?: string }>()
   private readonly disposeFileTool: () => void
   private readonly activeActors = new Map<string, ActiveActor>()
   private readonly activeAttachments = new Map<string, Set<string>>()
@@ -116,14 +119,28 @@ export class DshQQBridge {
       name: voice ? 'qqchat_send_voice' : 'qqchat_send_file',
       description: voice
         ? '将当前 QQ 消息中有权访问的音频附件作为可播放的 QQ 语音条发送回当前会话。仅在用户明确要求发送语音时调用。'
-        : '把当前 QQ 消息中有权访问的附件发送回当前私聊或群聊。仅在用户明确要求发送时调用。',
-      parameters: { attachment_id: { type: 'string', required: true, description: '当前 QQ 消息的附件 ID' } },
+        : '发送当前消息附件或当前 DSH 工作区内的文件到当前 QQ 会话。attachment_id 与 path 二选一。群聊仅 Owner 可使用 path。仅在用户明确要求发送时调用。',
+      parameters: {
+        attachment_id: { type: 'string', ...(voice ? { required: true as const } : {}), description: '当前 QQ 消息的附件 ID' },
+        ...(voice ? {} : { path: { type: 'string' as const, description: '当前工作区内的文件路径' } }),
+      },
       output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
-      execute: async ({ attachment_id }, exec) => {
+      execute: async ({ attachment_id, path }, exec) => {
         const agentId = String(exec.agent?.id || '')
-        const send = this.fileSenders.get(agentId)
-        if (!send || !canReadMedia(agentId, attachment_id)) return '当前 QQ 消息没有可发送的此附件。'
-        return send(attachment_id, voice, exec.signal)
+        const sender = this.fileSenders.get(agentId)
+        if (!sender) return '当前没有可发送文件的 QQ 会话。'
+        if (!voice && (path === undefined) === (attachment_id === undefined)) return 'attachment_id 与 path 必须且只能提供一个。'
+        if (!voice && typeof path === 'string') {
+          const actor = this.activeActors.get(agentId)
+          const owner = this.db.runtimeSettings(defaultRuntimeSettings(this.config)).ownerUserId
+          if (!actor || (actor.chatType === 'group' && (!owner || owner !== actor.senderId))) {
+            return '群聊仅 Owner 可以发送工作区文件。'
+          }
+          if (!sender.workspace) return '当前 DSH 会话没有工作区路径。'
+          return sender.send({ path, workspace: sender.workspace }, false, exec.signal)
+        }
+        if (typeof attachment_id !== 'string' || !attachment_id || !canReadMedia(agentId, attachment_id)) return '当前 QQ 消息没有可发送的此附件。'
+        return sender.send({ attachmentId: attachment_id }, voice, exec.signal)
       },
     }))
     const disposeFile = registerSendTool(false)
@@ -180,7 +197,7 @@ export class DshQQBridge {
     return sessionId
   }
 
-  async reply(message: QQNormalizedMessage, group: GroupRow | undefined, member: MemberRow, attachments: StoredAttachmentSummary[] = [], onTextDelta?: (delta: string) => void, isOwner = message.chatType === 'c2c', sendFile?: (id: string, voice: boolean, signal?: AbortSignal) => Promise<string>): Promise<string> {
+  async reply(message: QQNormalizedMessage, group: GroupRow | undefined, member: MemberRow, attachments: StoredAttachmentSummary[] = [], onTextDelta?: (delta: string) => void, isOwner = message.chatType === 'c2c', sendFile?: QQFileSender): Promise<string> {
     if (message.chatType === 'group' && !group) throw new Error('群消息缺少群上下文')
     const key = message.chatType === 'group' ? `g:${group!.id}` : `u:${member.id}`
     return this.serial(key, async () => {
@@ -239,7 +256,7 @@ export class DshQQBridge {
         || (settings.ownerUserId !== '' && settings.ownerUserId === message.senderId)
         || settings.groupMembersCanReadMedia)
       this.activeActors.set(String(sessionId), { chatType: message.chatType, senderId: message.senderId })
-      if (sendFile) this.fileSenders.set(String(sessionId), sendFile)
+      if (sendFile) this.fileSenders.set(String(sessionId), { send: sendFile, workspace: agent.session.header.cwd })
       try {
         agent.followup(current)
         await agent.whenIdle()
