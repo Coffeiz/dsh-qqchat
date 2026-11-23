@@ -1,3 +1,4 @@
+import { QQ_FILE_MAX_BYTES } from '../gateway/file-upload.js'
 import type { ConnectionRpcHandler } from '@deepseek-ai/dsh-client-connection'
 import type { QQChatRuntime } from '../session/runtime.js'
 import type {
@@ -104,6 +105,17 @@ export function createQQChatRpc(runtime: QQChatRuntime): ConnectionRpcHandler {
           const rowId = requireNumber(payload, 'rowId')
           const content = requireString(payload, 'content')
           return ok({ sessionId: await runtime.sendActive(chatType, rowId, content) })
+        }
+        case 'chat/send-file': {
+          const chatType = requireChatType(payload)
+          const rowId = requireNumber(payload, 'rowId')
+          const filename = requireString(payload, 'filename')
+          const encoded = requireString(payload, 'base64')
+          if (encoded.length > Math.ceil(QQ_FILE_MAX_BYTES / 3) * 4) throw new Error('文件超过 30 MiB')
+          const data = Buffer.from(encoded, 'base64')
+          if (data.toString('base64') !== encoded) throw new Error('文件编码无效')
+          await runtime.sendActiveFile(chatType, rowId, filename, data)
+          return ok({})
         }
         case 'attachment/read': {
           const sessionId = requireString(payload, 'sessionId')

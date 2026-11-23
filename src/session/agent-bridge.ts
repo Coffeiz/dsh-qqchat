@@ -9,6 +9,7 @@ import type { CommandInvocation, CommandRuntime, CommandResult } from '@deepseek
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { PreToolDecision } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-tools'
 import '../shared/augmentations.js'
@@ -68,6 +69,8 @@ export class DshQQBridge {
   private readonly routes = new Map<string, { provider: string; model: string }>()
   private readonly selections = new Map<string, { ref: ModelSelectionRef; dispose: () => void }>()
   private readonly pendingResets = new Set<string>()
+  private readonly fileSenders = new Map<string, (id: string, signal?: AbortSignal) => Promise<string>>()
+  private readonly disposeFileTool: () => void
   private readonly activeActors = new Map<string, ActiveActor>()
   private readonly activeAttachments = new Map<string, Set<string>>()
   private readonly activeMediaReadable = new Map<string, boolean>()
@@ -109,6 +112,18 @@ export class DshQQBridge {
       }
     })
     const canReadMedia = (agentId: string, attachmentId: string) => this.activeMediaReadable.get(agentId) === true && this.activeAttachments.get(agentId)?.has(attachmentId) === true
+    this.disposeFileTool = ctx.tools.register(defineTool({
+      name: 'qqchat_send_file',
+      description: '把当前 QQ 消息中有权访问的附件发送回当前私聊或群聊。仅在用户明确要求发送时调用。',
+      parameters: { attachment_id: { type: 'string', required: true, description: '当前 QQ 消息的附件 ID' } },
+      output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+      execute: async ({ attachment_id }, exec) => {
+        const agentId = String(exec.agent?.id || '')
+        const send = this.fileSenders.get(agentId)
+        if (!send || !canReadMedia(agentId, attachment_id)) return '当前 QQ 消息没有可发送的此附件。'
+        return send(attachment_id, exec.signal)
+      },
+    }))
     this.disposeImageTool = registerQQImageTool(ctx, db, canReadMedia)
     this.disposeMediaTools = registerQQMediaTools(ctx, db, canReadMedia)
     this.disposeCommands = this.registerCommands()
@@ -129,6 +144,8 @@ export class DshQQBridge {
     this.disposeAssistantStream()
     this.disposeToolGate()
     this.disposeImageTool()
+    this.disposeFileTool()
+    this.fileSenders.clear()
     this.disposeMediaTools()
     this.disposeCommands()
     for (const handle of this.handles.values()) {
@@ -158,7 +175,7 @@ export class DshQQBridge {
     return sessionId
   }
 
-  async reply(message: QQNormalizedMessage, group: GroupRow | undefined, member: MemberRow, attachments: StoredAttachmentSummary[] = [], onTextDelta?: (delta: string) => void, isOwner = message.chatType === 'c2c'): Promise<string> {
+  async reply(message: QQNormalizedMessage, group: GroupRow | undefined, member: MemberRow, attachments: StoredAttachmentSummary[] = [], onTextDelta?: (delta: string) => void, isOwner = message.chatType === 'c2c', sendFile?: (id: string, signal?: AbortSignal) => Promise<string>): Promise<string> {
     if (message.chatType === 'group' && !group) throw new Error('群消息缺少群上下文')
     const key = message.chatType === 'group' ? `g:${group!.id}` : `u:${member.id}`
     return this.serial(key, async () => {
@@ -217,11 +234,13 @@ export class DshQQBridge {
         || (settings.ownerUserId !== '' && settings.ownerUserId === message.senderId)
         || settings.groupMembersCanReadMedia)
       this.activeActors.set(String(sessionId), { chatType: message.chatType, senderId: message.senderId })
+      if (sendFile) this.fileSenders.set(String(sessionId), sendFile)
       try {
         agent.followup(current)
         await agent.whenIdle()
       } finally {
         this.activeActors.delete(String(sessionId))
+        this.fileSenders.delete(String(sessionId))
         this.activeAttachments.delete(String(sessionId))
         this.activeMediaReadable.delete(String(sessionId))
       }
@@ -234,9 +253,7 @@ export class DshQQBridge {
       } else if (message.chatType === 'c2c' && route.provider && route.model) {
         this.memory.setMemberRoute(Number(member.id), route.provider, route.model, String(sessionId))
       }
-      const text = pending?.text.trim()
-      if (!text) throw new Error('DSH Agent 本轮没有产生可发送的文本回复')
-      return text
+      return pending?.text.trim() || ''
     })
   }
 

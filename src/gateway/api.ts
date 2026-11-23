@@ -1,3 +1,4 @@
+import { QQ_FILE_MAX_BYTES, uploadQQFile } from './file-upload.js'
 import type { QQChatDatabase } from '../storage/db.js'
 import type {
   AccountRow,
@@ -109,6 +110,7 @@ export class QQApiClient {
     path: string,
     body: unknown,
     retry = true,
+    fileSignal?: AbortSignal,
   ): Promise<T> {
     const token = await this.token(account)
     const base = account.sandbox ? SANDBOX_API_BASE : API_BASE
@@ -116,19 +118,60 @@ export class QQApiClient {
       method,
       headers: { Authorization: `QQBot ${token}`, 'content-type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(20_000),
+      signal: fileSignal ?? AbortSignal.timeout(20_000),
     })
     const data = await safeJson<Record<string, unknown>>(response)
     if (response.status === 401 && retry) {
       this.clearToken(account.id)
-      return this.request<T>(account, method, path, body, false)
+      return this.request<T>(account, method, path, body, false, fileSignal)
     }
     if (!response.ok) {
+      if (fileSignal) {
+        const code = Number(data?.code ?? data?.err_code)
+        throw new QQFileRequestError(response.status, code)
+      }
       const code = data?.code ? ` code=${String(data.code)}` : ''
       const message = data?.message ? ` ${String(data.message)}` : ''
       throw new Error(`QQ API HTTP ${response.status}${code}${message}`)
     }
     return (data || {}) as T
+  }
+
+  async sendFile(
+    account: AccountRow, targetId: string, filename: string, data: Buffer,
+    { group = false, messageId = null }: QQSendOptions = {}, signal?: AbortSignal,
+  ): Promise<void> {
+    if (!filename.trim() || filename.length > 255 || /[\x00-\x1f\x7f/\\]/.test(filename)) throw new Error('文件名无效')
+    if (!data.length || data.length > QQ_FILE_MAX_BYTES) throw new Error('文件大小必须在 1 字节到 30 MiB 之间')
+    const path = `/v2/${group ? 'groups' : 'users'}/${encodeURIComponent(targetId)}`
+    const post = (endpoint: string, body: unknown, deadline: AbortSignal) =>
+      this.request(account, 'POST', endpoint, body, false, signal ? AbortSignal.any([signal, deadline]) : deadline)
+    let fileInfo: string
+    try {
+      fileInfo = await uploadQQFile(post, path, filename, data, signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(300_000)]) : AbortSignal.timeout(300_000))
+    } catch {
+      throw new Error('QQ 文件上传失败，请检查文件和机器人权限')
+    }
+    const deliver = (id: string | null) => post(`${path}/messages`, {
+      msg_type: 7, media: { file_info: fileInfo }, content: filename,
+      msg_seq: this.nextSeq(id), ...(id ? { msg_id: id } : {}),
+    }, AbortSignal.timeout(20_000))
+    let result
+    try {
+      try {
+        result = await deliver(messageId)
+      } catch (error) {
+        if (!group || !messageId || !(error instanceof QQFileRequestError) || !error.passiveRejected) throw error
+        result = await deliver(null)
+      }
+    } catch (error) {
+      if (error instanceof QQFileRequestError && error.status >= 400 && error.status < 500 && error.status !== 408) {
+        throw new Error(`QQ 拒绝文件消息（HTTP ${error.status}）`)
+      }
+      throw new Error('QQ 文件投递结果未知，请先在 QQ 确认是否送达')
+    }
+    if (typeof result.id !== 'string' || !result.id.trim()) throw new Error('QQ 文件投递结果未知，请先在 QQ 确认是否送达')
   }
 
   async sendText(
@@ -261,4 +304,16 @@ export class QQApiClient {
 
 async function safeJson<T>(response: Response): Promise<T | undefined> {
   try { return await response.json() as T } catch { return undefined }
+}
+
+
+class QQFileRequestError extends Error {
+  constructor(readonly status: number, private readonly code: number) {
+    super(`QQ 文件接口返回 HTTP ${status}`)
+  }
+
+  get passiveRejected(): boolean {
+    return this.status >= 400 && this.status < 500 && this.status !== 408
+      && [40034005, 40034024, 40034031, 40034128].includes(this.code)
+  }
 }

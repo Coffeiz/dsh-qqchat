@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises'
+import { QQ_FILE_MAX_BYTES } from '../gateway/file-upload.js'
+import { open, readFile } from 'node:fs/promises'
 import type { Context } from '@deepseek-ai/cordis'
 import type { DshQQBridge } from './agent-bridge.js'
 import { defaultRuntimeSettings } from '../config.js'
@@ -128,6 +129,19 @@ export class QQChatRuntime {
     this.logger.info?.(`[dsh-qqchat] active ${chatType} message sent to ${shortId(targetId)}`)
     if (!sessionId) throw new Error('未能建立 QQ Chat DSH session')
     return sessionId
+  }
+
+  async sendActiveFile(chatType: ChatType, rowId: number, filename: string, data: Buffer): Promise<void> {
+    const row = this.chatRow(chatType, rowId)
+    if (!row) throw new Error('QQ 会话不存在')
+    const account = this.db.accountById(Number(row.account_id))
+    if (!account) throw new Error('QQ 账号不存在')
+    const targetId = chatType === 'group' ? (row as GroupRow).platform_group_id : (row as MemberRow).platform_user_id
+    await this.api.sendFile(account, targetId, filename, data, { group: chatType === 'group' })
+    this.db.insertMessage({
+      accountId: Number(account.id), chatType, groupId: chatType === 'group' ? rowId : undefined,
+      memberId: chatType === 'c2c' ? rowId : undefined, direction: 'outbound', content: '[已发送文件]',
+    })
   }
 
   async readAttachment(sessionId: string, attachmentId: string): Promise<Record<string, unknown>> {
@@ -265,7 +279,40 @@ export class QQChatRuntime {
       const stream = message.chatType === 'c2c' && settings.directReplyFormat === 'markdown'
         ? this.api.createPrivateTextStream(account, targetId, { messageId: sendOptions.messageId })
         : undefined
-      const reply = await this.bridge.reply(message, group, member, storedAttachments, stream ? delta => stream.push(delta) : undefined, isOwner)
+      let fileSent = false
+      let streamedText = ''
+      const fileAttempts = new Map<string, Promise<string>>()
+      const sendFile = (id: string, signal?: AbortSignal): Promise<string> => {
+        const previous = fileAttempts.get(id)
+        if (previous) return previous
+        const attachment = storedAttachments.find(item => item.id === id)
+        if (!attachment?.localPath) return Promise.resolve('此附件没有可发送的本地副本。')
+        const attempt = (async () => {
+          try {
+            const data = await readOutboundAttachment(attachment.localPath!)
+            await this.api.sendFile(account, targetId, attachment.filename, data, sendOptions, signal)
+            fileSent = true
+            this.db.insertMessage({
+              accountId: message.accountId, chatType: message.chatType, groupId: group?.id,
+              memberId: message.chatType === 'c2c' ? member.id : undefined, direction: 'outbound', content: '[已发送文件]',
+            })
+            return '文件已送达当前 QQ 会话。'
+          } catch (error) {
+            return fileSent ? '请在 QQ 确认文件投递状态。' : error instanceof Error ? error.message : '文件发送失败。'
+          }
+        })()
+        fileAttempts.set(id, attempt)
+        return attempt
+      }
+      const reply = await this.bridge.reply(message, group, member, storedAttachments, stream ? delta => {
+        streamedText += delta
+        stream.push(delta)
+      } : undefined, isOwner, sendFile)
+      if (!reply) {
+        if (streamedText && stream) await stream.finish(streamedText)
+        if (fileSent) return
+        throw new Error('DSH Agent 本轮没有产生可发送的文本回复')
+      }
       if (stream) {
         try {
           await stream.finish(reply)
@@ -399,4 +446,25 @@ export function indexAttachments(inputs: QQAttachmentInput[], stored: StoredAtta
       ...(match ? { attachmentId: match.id } : {}),
     }
   })
+}
+
+
+async function readOutboundAttachment(path: string): Promise<Buffer> {
+  try {
+    const file = await open(path, 'r')
+    try {
+      const stat = await file.stat()
+      if (!stat.isFile() || stat.size < 1 || stat.size > QQ_FILE_MAX_BYTES) {
+        throw new Error('文件大小无效')
+      }
+      const data = Buffer.alloc(stat.size)
+      const { bytesRead } = await file.read({ buffer: data, position: 0 })
+      if (bytesRead !== stat.size) throw new Error('文件读取不完整')
+      return data
+    } finally {
+      await file.close()
+    }
+  } catch {
+    throw new Error('附件已过期、无法读取或超过 30 MiB')
+  }
 }

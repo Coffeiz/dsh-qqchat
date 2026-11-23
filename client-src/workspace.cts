@@ -71,6 +71,46 @@ function MemberMemory({ member, onBack }: { member: ChatMember; onBack(): void }
       h(MemoryCard, { title: '成员长期记忆 · memory', value: member.memory.memory })))
 }
 
+function QQSendFile({ sessionId, rpc }: SessionUtilityProps & { rpc: Rpc }) {
+  const [open, setOpen] = useState(false)
+  const [file, setFile] = useState<File | null>(null)
+  const [sending, setSending] = useState(false)
+  const [status, setStatus] = useState('')
+  const send = async () => {
+    if (!file || sending) return
+    setSending(true)
+    setStatus('正在发送…')
+    try {
+      if (!file.size || file.size > 30 * 1024 * 1024) throw new Error('文件大小必须在 1 字节到 30 MiB 之间')
+      const info = await call<ChatInfo>(rpc, 'chat/info', { sessionId })
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      const chunks: string[] = []
+      for (let i = 0; i < bytes.length; i += 24_576) {
+        chunks.push(btoa(String.fromCharCode(...bytes.subarray(i, i + 24_576))))
+      }
+      await call(rpc, 'chat/send-file', { chatType: info.chatType, rowId: info.rowId, filename: file.name, base64: chunks.join('') })
+      setFile(null)
+      setStatus('文件已发送。')
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '文件发送失败。')
+    } finally {
+      setSending(false)
+    }
+  }
+  return h(React.Fragment, null,
+    h(Button, { size: 'sm', variant: 'outline', onClick: () => setOpen(true) }, '发送文件'),
+    open ? h(Modal, { title: '向当前 QQ 会话发送文件', onClose: () => {
+      if (!sending) { setOpen(false); setFile(null); setStatus('') }
+    } }, h('div', null,
+      h('input', { type: 'file', 'aria-label': '选择本地文件', disabled: sending,
+        onChange: (event: { currentTarget: HTMLInputElement }) => {
+          setFile(event.currentTarget.files?.[0] ?? null)
+          setStatus('')
+        } }),
+      h(Button, { disabled: !file || sending, onClick: () => void send() }, '发送'),
+      h('p', { role: 'status' }, status))) : null)
+}
+
 export function QQSessionUtility({ sessionId, rpc }: SessionUtilityProps & { rpc: Rpc }) {
   const [info, setInfo] = useState<ChatInfo | null>(null)
   const [open, setOpen] = useState(false)
@@ -120,6 +160,7 @@ export function QQSessionUtility({ sessionId, rpc }: SessionUtilityProps & { rpc
     : null
 
   return h(React.Fragment, null,
+    h(QQSendFile, { key: String(sessionId), sessionId, rpc }),
     h(Button, { size: 'sm', variant: 'outline', onClick: () => void show() }, 'QQ 记忆'),
     open && info
       ? h(Modal, {

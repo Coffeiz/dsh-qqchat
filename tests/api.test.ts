@@ -149,3 +149,47 @@ test('gateway URL refreshes a cached token after HTTP 401', async () => {
 function response(body: Record<string, unknown>, status = 200): Response {
   return { ok: status >= 200 && status < 300, status, json: async () => body } as Response
 }
+
+test('QQ file upload confirms parts and sends media to the selected chat', async () => {
+  const originalFetch = globalThis.fetch
+  const account = { id: 1, app_id: 'app', app_secret: 'secret', sandbox: false } as never
+  for (const group of [false, true]) {
+    const paths: string[] = []
+    const bodies: Record<string, unknown>[] = []
+    globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input))
+      if (url.pathname.includes('getAppAccessToken')) return response({ access_token: 'fixture', expires_in: 3600 })
+      paths.push(url.pathname)
+      if (init?.method === 'PUT') {
+        assert.equal(init.redirect, 'error')
+        assert.equal(new Headers(init.headers).has('Authorization'), false)
+        return response({})
+      }
+      bodies.push(JSON.parse(String(init?.body)))
+      if (url.pathname.endsWith('/upload_prepare')) {
+        return response({ upload_id: 'upload', block_size: '8', parts: [{ index: 1, presigned_url: 'https://bucket.myqcloud.com/part' }] })
+      }
+      if (url.pathname.endsWith('/files')) return response({ file_info: 'file-info' })
+      if (url.pathname.endsWith('/messages')) {
+        if (group && bodies.at(-1)?.msg_id) return new Response(JSON.stringify({ code: 40034128 }), { status: 400 })
+        return response({ id: 'sent' })
+      }
+      return response({})
+    }
+    try {
+      const api = new QQApiClient({} as never, {} as never)
+      await api.sendFile(account, 'target', 'fixture.txt', Buffer.from('fixture'), {
+        group, messageId: group ? 'incoming' : null,
+      })
+      const path = `/v2/${group ? 'groups' : 'users'}/target`
+      assert.deepEqual(paths, [`${path}/upload_prepare`, '/part', `${path}/upload_part_finish`, `${path}/files`,
+        `${path}/messages`, ...(group ? [`${path}/messages`] : [])])
+      assert.equal(bodies[0]?.file_type, 4)
+      assert.deepEqual(bodies.at(-1)?.media, { file_info: 'file-info' })
+      assert.equal(bodies.at(-1)?.msg_type, 7)
+      assert.equal(bodies.at(-1)?.msg_id, undefined)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  }
+})

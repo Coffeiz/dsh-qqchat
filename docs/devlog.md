@@ -119,3 +119,9 @@ npm run typecheck
 npm test
 npm run build
 ```
+
+## 2026-11-23 · QQ 文件发送
+
+Host 先初始化上传、通过腾讯 COS 签名地址写入分片并确认，最后用 `file_info` 发送富媒体消息。分片请求不携带 Bot 凭据。群聊被动回复明确被拒时复用上传结果，改走主动发送。投递结果未知时提示先核对 QQ。
+
+DSH Web 会话工具栏提供本地文件选择。Agent 的 `qqchat_send_file` 通过附件 ID 读取当前 QQ 消息获准访问的本地副本，发回同一会话。出站历史使用通用占位符记录成功投递。
