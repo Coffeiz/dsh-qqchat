@@ -411,6 +411,8 @@ export interface QQSendOptions {
   group?: boolean
   messageId?: string | null
   format?: ReplyFormat
+  mentionUserId?: string
+  knownMemberIds?: readonly string[]
 }
 
 export interface ModelRoute {

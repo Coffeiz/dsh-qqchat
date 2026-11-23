@@ -1,4 +1,5 @@
 import { prepareQQVoice } from '../media/voice.js'
+import { formatQQGroupMentions, hasQQGroupMention } from './mentions.js'
 import { QQ_FILE_MAX_BYTES, uploadQQFile } from './file-upload.js'
 import type { QQChatDatabase } from '../storage/db.js'
 import type {
@@ -194,14 +195,15 @@ export class QQApiClient {
     account: AccountRow,
     targetId: string,
     text: string,
-    { group = false, messageId = null, format = this.config.replyFormat }: QQSendOptions = {},
+    { group = false, messageId = null, format = this.config.replyFormat, mentionUserId, knownMemberIds = [] }: QQSendOptions = {},
   ): Promise<Record<string, unknown>> {
     const path = group ? `/v2/groups/${encodeURIComponent(targetId)}/messages` : `/v2/users/${encodeURIComponent(targetId)}/messages`
     const seq = this.nextSeq(messageId)
-    const useMarkdown = format === 'markdown'
+    const content = group ? formatQQGroupMentions(text, mentionUserId, knownMemberIds) : text
+    const useMarkdown = format === 'markdown' || (group && hasQQGroupMention(content))
     const makeBody = (markdown: boolean): QQSendBody => ({
       msg_type: markdown ? 2 : 0,
-      ...(markdown ? { markdown: { content: text } } : { content: text }),
+      ...(markdown ? { markdown: { content } } : { content }),
       msg_seq: seq,
       ...(messageId ? { msg_id: messageId } : {}),
     })

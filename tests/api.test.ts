@@ -22,6 +22,48 @@ test('normal sends use only the selected Markdown or plain compatibility format'
   }
 })
 
+test('group mentions are rendered as QQ mention tags and force Markdown for compat chats', async () => {
+  const requests: Array<Record<string, unknown>> = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    if (String(input).includes('/app/getAppAccessToken')) return response({ access_token: 'token', expires_in: 3600 })
+    requests.push(JSON.parse(String(init?.body || '{}')) as Record<string, unknown>)
+    return response({ id: 'sent' })
+  }) as typeof fetch
+  try {
+    const api = new QQApiClient({} as never, { replyFormat: 'compat' } as never)
+    const account = { id: 1, app_id: 'app', app_secret: 'secret', sandbox: false } as never
+    await api.sendText(account, 'group-1', '@member-1 <@bot-1>', {
+      group: true, format: 'compat', knownMemberIds: ['member-1', 'bot-1'],
+    })
+    assert.equal(requests[0]?.msg_type, 2)
+    assert.deepEqual(requests[0]?.markdown, {
+      content: '<qqbot-at-user id="member-1" /> <qqbot-at-user id="bot-1" />',
+    })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('ordinary compat group text remains plain and untrusted @IDs are not converted', async () => {
+  const requests: Array<Record<string, unknown>> = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    if (String(input).includes('/app/getAppAccessToken')) return response({ access_token: 'token', expires_in: 3600 })
+    requests.push(JSON.parse(String(init?.body || '{}')) as Record<string, unknown>)
+    return response({ id: 'sent' })
+  }) as typeof fetch
+  try {
+    const api = new QQApiClient({} as never, { replyFormat: 'compat' } as never)
+    await api.sendText({ id: 1, app_id: 'app', app_secret: 'secret', sandbox: false } as never,
+      'group-1', '普通消息 @stranger', { group: true, format: 'compat', knownMemberIds: ['member-1'] })
+    assert.equal(requests[0]?.msg_type, 0)
+    assert.equal(requests[0]?.content, '普通消息 @stranger')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 test('private text stream sends start and finish parts with one stream id', async () => {
   const requests: Array<{ url: string; body: Record<string, unknown> }> = []
   const originalFetch = globalThis.fetch

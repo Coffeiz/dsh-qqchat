@@ -35,6 +35,7 @@ export declare class QQChatRuntime {
     restartGateway(accountId: number): Promise<void>;
     connectManual(appId: string, appSecret: string, sandbox?: boolean): Promise<AccountRow>;
     private onIncoming;
+    private groupMentionOptions;
     private chatRow;
     private flushOutbox;
 }
