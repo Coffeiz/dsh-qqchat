@@ -36,7 +36,7 @@
 | QR connection | Binds an official QQ Bot from **Settings -> QQ Chat** | Cancel the binding and scan again when needed |
 | Manual connection | Connects with AppID and AppSecret from the settings page | Useful for headless servers or QR failures; the secret is sent only to the Host |
 | Group receive modes | Auto reply, Mention only or Silent record | Silent record stores messages without waking the Agent |
-| Group mentions | Converts known member and Bot `@ID` mentions to QQ-native mentions | Only messages containing mentions use the parseable message type; other compatibility messages stay plain text |
+| Group mentions | Converts syntactically valid `@ID` and `<@ID>` mentions without a local member list | `@ID` in code and URLs stays unchanged; Markdown permission failures fall back to readable plain text |
 | Message formats | Markdown or Plain compatibility | Group and direct-chat formats are configured separately; groups default to Plain compatibility |
 | Direct-chat streaming | Markdown format automatically uses QQ's official streaming message API | Plain compatibility uses a regular send; some clients may not display streaming |
 | Quotes and mentions | Preserves quoted messages and resolves QQ mentions to display names | Stable IDs remain in metadata |

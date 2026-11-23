@@ -112,11 +112,9 @@ export class QQChatRuntime {
     if (!account) throw new Error('QQ 账号不存在')
     const targetId = chatType === 'group' ? (row as GroupRow).platform_group_id : (row as MemberRow).platform_user_id
     const settings = this.settings()
-    const group = chatType === 'group' ? row as GroupRow : undefined
     await this.api.sendText(account, targetId, text, {
       group: chatType === 'group', messageId: null,
       format: chatType === 'group' ? settings.groupReplyFormat : settings.directReplyFormat,
-      ...(group ? this.groupMentionOptions(group, account) : {}),
     })
     const messageDbId = this.db.insertMessage({
       accountId: Number(account.id), chatType, groupId: chatType === 'group' ? Number(row.id) : undefined,
@@ -284,7 +282,6 @@ export class QQChatRuntime {
       const sendOptions = {
         group: message.chatType === 'group', messageId: message.messageId || null,
         format: message.chatType === 'group' ? settings.groupReplyFormat : settings.directReplyFormat,
-        ...(group ? this.groupMentionOptions(group, account, message.senderId) : {}),
       } as const
       const stream = message.chatType === 'c2c' && settings.directReplyFormat === 'markdown'
         ? this.api.createPrivateTextStream(account, targetId, { messageId: sendOptions.messageId })
@@ -372,17 +369,6 @@ export class QQChatRuntime {
     }
   }
 
-  private groupMentionOptions(group: GroupRow | undefined, account: AccountRow, mentionUserId?: string) {
-    if (!group) return {}
-    return {
-      mentionUserId,
-      knownMemberIds: [
-        account.bot_user_id || '',
-        ...this.db.listGroupMembers(Number(group.id)).map(member => member.platform_user_id),
-      ],
-    }
-  }
-
   private chatRow(chatType: ChatType, rowId: number): GroupRow | MemberRow | undefined {
     return chatType === 'group' ? this.db.groupById(Number(rowId)) : this.db.memberById(Number(rowId))
   }
@@ -395,9 +381,6 @@ export class QQChatRuntime {
         if (!account) throw new Error('QQ account missing')
         await this.api.sendText(account, item.target_id, item.content, {
         group: item.chat_type === 'group', messageId: null, format: item.chat_type === 'group' ? settings.groupReplyFormat : settings.directReplyFormat,
-        ...(item.chat_type === 'group'
-          ? this.groupMentionOptions(this.db.groupByPlatform(Number(account.id), item.target_id), account)
-          : {}),
         })
         this.db.finishOutbox(Number(item.id))
       } catch (error) {

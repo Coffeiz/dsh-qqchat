@@ -195,15 +195,15 @@ export class QQApiClient {
     account: AccountRow,
     targetId: string,
     text: string,
-    { group = false, messageId = null, format = this.config.replyFormat, mentionUserId, knownMemberIds = [] }: QQSendOptions = {},
+    { group = false, messageId = null, format = this.config.replyFormat }: QQSendOptions = {},
   ): Promise<Record<string, unknown>> {
     const path = group ? `/v2/groups/${encodeURIComponent(targetId)}/messages` : `/v2/users/${encodeURIComponent(targetId)}/messages`
     const seq = this.nextSeq(messageId)
-    const content = group ? formatQQGroupMentions(text, mentionUserId, knownMemberIds) : text
+    const content = group ? formatQQGroupMentions(text) : text
     const useMarkdown = format === 'markdown' || (group && hasQQGroupMention(content))
-    const makeBody = (markdown: boolean): QQSendBody => ({
+    const makeBody = (markdown: boolean, bodyText = content): QQSendBody => ({
       msg_type: markdown ? 2 : 0,
-      ...(markdown ? { markdown: { content } } : { content }),
+      ...(markdown ? { markdown: { content: bodyText } } : { content: bodyText }),
       msg_seq: seq,
       ...(messageId ? { msg_id: messageId } : {}),
     })
@@ -211,7 +211,7 @@ export class QQApiClient {
       return await this.request(account, 'POST', path, makeBody(useMarkdown))
     } catch (error) {
       if (useMarkdown && /50056|markdown|md perm/i.test(String(error))) {
-        return this.request(account, 'POST', path, makeBody(false))
+        return this.request(account, 'POST', path, makeBody(false, text))
       }
       throw error
     }

@@ -1,31 +1,30 @@
-const GROUP_MENTION = /<qqbot-at-user\s+id="([^"\s<>]+)"\s*\/>/u
+const GROUP_MENTION = /<qqbot-at-user\s+id="[A-Za-z0-9][A-Za-z0-9._:-]*"\s*\/>/u
+const QQ_MENTION_TAG = /<qqbot-at-user\s+id="([^"]*)"\s*\/>/gu
+const PROTECTED_MARKDOWN = /(```[\s\S]*?```|`[^`\n]*`|https?:\/\/[^\s<]+|www\.[^\s<]+)/gu
+const QQ_OPENID = '[A-Fa-f0-9]{32}'
 
-export function formatQQGroupMentions(
-  text: string,
-  currentUserId: string | undefined,
-  knownMemberIds: readonly string[],
-): string {
-  const trusted = new Set(knownMemberIds.filter(isSafeMentionId))
-  if (currentUserId && isSafeMentionId(currentUserId)) trusted.add(currentUserId)
-
-  const normalized = text.replace(/<@!?([^>\s]+)>/gu, (token, id: string) =>
-    isSafeMentionId(id) ? `<qqbot-at-user id="${id}" />` : token,
-  )
-  if (!trusted.size) return normalized
-
-  const ids = [...trusted].sort((a, b) => b.length - a.length)
-  const pattern = new RegExp(`(?<![<@\\w])[@＠](${ids.map(escapeRegExp).join('|')})(?!\\w)`, 'gu')
-  return normalized.replace(pattern, (_token, id: string) => `<qqbot-at-user id="${id}" />`)
+export function formatQQGroupMentions(text: string): string {
+  return text.split(PROTECTED_MARKDOWN)
+    .map((part, index) => index % 2 === 1 ? part : formatMentionText(part))
+    .join('')
 }
 
 export function hasQQGroupMention(text: string): boolean {
-  return GROUP_MENTION.test(text)
+  return text.split(PROTECTED_MARKDOWN).some((part, index) => index % 2 === 0 && GROUP_MENTION.test(part))
+}
+
+function formatMentionText(text: string): string {
+  const normalizedTags = text.replace(QQ_MENTION_TAG, (token, id: string) =>
+    isSafeMentionId(id) ? `<qqbot-at-user id="${id}" />` : token,
+  )
+  const normalized = normalizedTags.replace(/<@!?([^>\s]+)>/gu, (token, id: string) =>
+    isSafeMentionId(id) ? `<qqbot-at-user id="${id}" />` : token,
+  )
+  return normalized.replace(new RegExp(`(?<![\\w@./])[@＠](${QQ_OPENID})(?![\\w.-])`, 'gu'),
+    (token, id: string) => isSafeMentionId(id) ? `<qqbot-at-user id="${id}" />` : token,
+  )
 }
 
 function isSafeMentionId(value: string): boolean {
-  return !!value && !/[\s<>"']/u.test(value)
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(value)
 }
