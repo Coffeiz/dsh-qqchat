@@ -32,7 +32,7 @@ export function createQQChatRpc(runtime: QQChatRuntime): ConnectionRpcHandler {
     if (upload) clearTimeout(upload.timer)
     uploads.delete(id)
   }
-  return async (endpoint, payload) => {
+  return async (endpoint, payload, signal) => {
     try {
       switch (endpoint) {
         case 'status':
@@ -156,7 +156,8 @@ export function createQQChatRpc(runtime: QQChatRuntime): ConnectionRpcHandler {
           upload.offset = -1
           clearTimeout(upload.timer)
           try {
-            await runtime.sendActiveFile(upload.chatType, upload.rowId, upload.filename, upload.data, upload.voice)
+            const deadline = AbortSignal.any([signal, AbortSignal.timeout(300_000)])
+            await runtime.sendActiveFile(upload.chatType, upload.rowId, upload.filename, upload.data, upload.voice, deadline)
           } finally {
             dropUpload(id)
           }

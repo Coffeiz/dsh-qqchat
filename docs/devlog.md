@@ -138,6 +138,8 @@ DSH Web 会话工具栏提供本地文件选择。Agent 的 `qqchat_send_file` �
 
 ## 2026-11-23 · Agent 发送工作区文件
 
-`qqchat_send_file` 接受 `attachment_id` 或 `path`。以 DSH Session 的 `cwd` 为文件边界，检查真实路径并核对已打开文件。群聊路径发送额外校验 Owner stable ID。文件复用现有分片上传及投递去重逻辑。
+`qqchat_send_file` 接受 `attachment_id` 或 `path`。以 DSH Session 的 `cwd` 为文件边界，检查真实路径并核对已打开文件。私聊与群聊路径发送均校验 Owner stable ID。文件复用现有分片上传及投递去重逻辑。
 
 `qqchat_send_voice` 同样支持工作区路径，沿用 Owner 与路径边界校验，读取后的音频通过语音转码和富媒体分片上传链路投递。
+
+第三轮审查修正：工作区路径发送必须匹配已配置的 Owner stable ID。Web 提交后使用独立的 5 分钟期限，取消信号传递到转码、Token 请求、分片上传和最终投递。

@@ -7,14 +7,14 @@
 ### QQ 原生语音条
 
 - QQ 私聊和群聊会话顶部提供「发送语音」，可将本地音频作为可播放的 QQ 语音条发送。
-- Agent 可调用 `qqchat_send_voice`，将当前消息中的音频附件或工作区内的音频文件作为语音条发回同一会话。使用 `attachment_id` 与 `path` 二选一，群聊仅 Owner 可用 `path`。
+- Agent 可调用 `qqchat_send_voice`，将当前消息中的音频附件或工作区内的音频文件作为语音条发回同一会话。使用 `attachment_id` 与 `path` 二选一，私聊与群聊均仅 Owner 可用 `path`。
 - SILK 音频可直接发送。其他音频需要 DSH Host 安装 FFmpeg，插件会将其转换为 SILK。
 
 ### QQ 文件发送
 
-- `qqchat_send_file` 支持用 `path` 发送当前 DSH 会话工作区内的文件，与 `attachment_id` 二选一。群聊中仅配置的 Owner 可用路径发送。
+- `qqchat_send_file` 支持用 `path` 发送当前 DSH 会话工作区内的文件，与 `attachment_id` 二选一。私聊与群聊均仅配置的 Owner 可用路径发送。
 
-- 文件和语音由 Web 按片传给 Host，再通过腾讯 COS 分片上传。上传控制接口遇到 401 时刷新凭据一次。Agent 可重新尝试明确未进入投递的失败，投递结果未知时提示先核对 QQ。
+- 文件和语音由 Web 按片传给 Host，再通过腾讯 COS 分片上传。Web 提交后的转换、上传和投递共用 5 分钟超时。上传控制接口遇到 401 时刷新凭据一次。Agent 可重新尝试明确未进入投递的失败，投递结果未知时提示先核对 QQ。
 
 - 在 DSH Web 的 QQ 私聊或群聊会话顶部点击「发送文件」，即可主动发送本地文件，单文件上限为 30 MiB。
 - Agent 可调用 `qqchat_send_file`，按附件 ID 将当前消息中有权访问的附件发回同一会话。

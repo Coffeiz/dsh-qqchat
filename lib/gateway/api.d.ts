@@ -13,7 +13,7 @@ export declare class QQApiClient {
     private streamSequence;
     constructor(db: QQChatDatabase, config: QQChatConfig);
     clearToken(accountId: number): void;
-    token(account: AccountRow): Promise<string>;
+    token(account: AccountRow, signal?: AbortSignal): Promise<string>;
     gatewayUrl(account: AccountRow, retry?: boolean): Promise<string>;
     private nextSeq;
     /**

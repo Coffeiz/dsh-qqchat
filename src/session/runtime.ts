@@ -133,15 +133,15 @@ export class QQChatRuntime {
     return sessionId
   }
 
-  async sendActiveFile(chatType: ChatType, rowId: number, filename: string, data: Buffer, voice = false): Promise<void> {
+  async sendActiveFile(chatType: ChatType, rowId: number, filename: string, data: Buffer, voice = false, signal?: AbortSignal): Promise<void> {
     const row = this.chatRow(chatType, rowId)
     if (!row) throw new Error('QQ 会话不存在')
     const account = this.db.accountById(Number(row.account_id))
     if (!account) throw new Error('QQ 账号不存在')
     const targetId = chatType === 'group' ? (row as GroupRow).platform_group_id : (row as MemberRow).platform_user_id
     const options = { group: chatType === 'group' }
-    if (voice) await this.api.sendVoice(account, targetId, data, options)
-    else await this.api.sendFile(account, targetId, filename, data, options)
+    if (voice) await this.api.sendVoice(account, targetId, data, options, signal)
+    else await this.api.sendFile(account, targetId, filename, data, options, signal)
     this.db.insertMessage({
       accountId: Number(account.id), chatType, groupId: chatType === 'group' ? rowId : undefined,
       memberId: chatType === 'c2c' ? rowId : undefined, direction: 'outbound', content: voice ? '[已发送语音]' : '[已发送文件]',

@@ -118,8 +118,8 @@ export class DshQQBridge {
     const registerSendTool = (voice: boolean) => ctx.tools.register(defineTool({
       name: voice ? 'qqchat_send_voice' : 'qqchat_send_file',
       description: voice
-        ? '将当前消息中的音频附件或工作区内的音频文件作为 QQ 语音条发回当前会话。attachment_id 与 path 二选一。群聊仅 Owner 可使用 path。仅在用户明确要求发送语音时调用。'
-        : '发送当前消息附件或当前 DSH 工作区内的文件到当前 QQ 会话。attachment_id 与 path 二选一。群聊仅 Owner 可使用 path。仅在用户明确要求发送时调用。',
+        ? '将当前消息中的音频附件或工作区内的音频文件作为 QQ 语音条发回当前会话。attachment_id 与 path 二选一。私聊与群聊均仅 Owner 可使用 path。仅在用户明确要求发送语音时调用。'
+        : '发送当前消息附件或当前 DSH 工作区内的文件到当前 QQ 会话。attachment_id 与 path 二选一。私聊与群聊均仅 Owner 可使用 path。仅在用户明确要求发送时调用。',
       parameters: {
         attachment_id: { type: 'string', description: '当前 QQ 消息的附件 ID' },
         path: { type: 'string', description: '当前工作区内的文件路径' },
@@ -133,8 +133,8 @@ export class DshQQBridge {
         if (typeof path === 'string') {
           const actor = this.activeActors.get(agentId)
           const owner = this.db.runtimeSettings(defaultRuntimeSettings(this.config)).ownerUserId
-          if (!actor || (actor.chatType === 'group' && (!owner || owner !== actor.senderId))) {
-            return '群聊仅 Owner 可以发送工作区文件。'
+          if (!actor || !owner || owner !== actor.senderId) {
+            return '仅 Owner 可以发送工作区文件。'
           }
           if (!sender.workspace) return '当前 DSH 会话没有工作区路径。'
           return sender.send({ path, workspace: sender.workspace }, voice, exec.signal)

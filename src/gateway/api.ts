@@ -57,14 +57,16 @@ export class QQApiClient {
 
   clearToken(accountId: number): void { this.tokens.delete(Number(accountId)) }
 
-  async token(account: AccountRow): Promise<string> {
+  async token(account: AccountRow, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted()
     const id = Number(account.id)
     const cached = this.tokens.get(id)
     if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token
+    const deadline = AbortSignal.timeout(15_000)
     const response = await fetch(TOKEN_URL, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ appId: account.app_id, clientSecret: account.app_secret }),
-      signal: AbortSignal.timeout(15_000),
+      signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
     })
     const data = await safeJson<QQAccessTokenPayload>(response)
     if (!response.ok || !data?.access_token) throw new Error(`QQ access_token 获取失败: HTTP ${response.status}`)
@@ -113,7 +115,7 @@ export class QQApiClient {
     retry = true,
     fileSignal?: AbortSignal,
   ): Promise<T> {
-    const token = await this.token(account)
+    const token = await this.token(account, fileSignal)
     const base = account.sandbox ? SANDBOX_API_BASE : API_BASE
     const response = await fetch(`${base}${path}`, {
       method,
