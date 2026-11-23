@@ -29,7 +29,7 @@ export declare class QQChatRuntime {
     listChats(): ChatTargetRow[];
     ensureChatSession(chatType: ChatType, rowId: number): Promise<string>;
     sendActive(chatType: ChatType, rowId: number, content: string): Promise<string>;
-    sendActiveFile(chatType: ChatType, rowId: number, filename: string, data: Buffer): Promise<void>;
+    sendActiveFile(chatType: ChatType, rowId: number, filename: string, data: Buffer, voice?: boolean): Promise<void>;
     readAttachment(sessionId: string, attachmentId: string): Promise<Record<string, unknown>>;
     startGateway(account: AccountRow | undefined): void;
     restartGateway(accountId: number): Promise<void>;

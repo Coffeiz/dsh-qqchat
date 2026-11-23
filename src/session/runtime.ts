@@ -131,16 +131,18 @@ export class QQChatRuntime {
     return sessionId
   }
 
-  async sendActiveFile(chatType: ChatType, rowId: number, filename: string, data: Buffer): Promise<void> {
+  async sendActiveFile(chatType: ChatType, rowId: number, filename: string, data: Buffer, voice = false): Promise<void> {
     const row = this.chatRow(chatType, rowId)
     if (!row) throw new Error('QQ 会话不存在')
     const account = this.db.accountById(Number(row.account_id))
     if (!account) throw new Error('QQ 账号不存在')
     const targetId = chatType === 'group' ? (row as GroupRow).platform_group_id : (row as MemberRow).platform_user_id
-    await this.api.sendFile(account, targetId, filename, data, { group: chatType === 'group' })
+    const options = { group: chatType === 'group' }
+    if (voice) await this.api.sendVoice(account, targetId, data, options)
+    else await this.api.sendFile(account, targetId, filename, data, options)
     this.db.insertMessage({
       accountId: Number(account.id), chatType, groupId: chatType === 'group' ? rowId : undefined,
-      memberId: chatType === 'c2c' ? rowId : undefined, direction: 'outbound', content: '[已发送文件]',
+      memberId: chatType === 'c2c' ? rowId : undefined, direction: 'outbound', content: voice ? '[已发送语音]' : '[已发送文件]',
     })
   }
 
@@ -282,26 +284,28 @@ export class QQChatRuntime {
       let fileSent = false
       let streamedText = ''
       const fileAttempts = new Map<string, Promise<string>>()
-      const sendFile = (id: string, signal?: AbortSignal): Promise<string> => {
-        const previous = fileAttempts.get(id)
+      const sendFile = (id: string, voice: boolean, signal?: AbortSignal): Promise<string> => {
+        const key = `${voice ? "voice" : "file"}:${id}`
+        const previous = fileAttempts.get(key)
         if (previous) return previous
         const attachment = storedAttachments.find(item => item.id === id)
         if (!attachment?.localPath) return Promise.resolve('此附件没有可发送的本地副本。')
         const attempt = (async () => {
           try {
             const data = await readOutboundAttachment(attachment.localPath!)
-            await this.api.sendFile(account, targetId, attachment.filename, data, sendOptions, signal)
+            if (voice) await this.api.sendVoice(account, targetId, data, sendOptions, signal)
+            else await this.api.sendFile(account, targetId, attachment.filename, data, sendOptions, signal)
             fileSent = true
             this.db.insertMessage({
               accountId: message.accountId, chatType: message.chatType, groupId: group?.id,
-              memberId: message.chatType === 'c2c' ? member.id : undefined, direction: 'outbound', content: '[已发送文件]',
+              memberId: message.chatType === 'c2c' ? member.id : undefined, direction: 'outbound', content: voice ? '[已发送语音]' : '[已发送文件]',
             })
-            return '文件已送达当前 QQ 会话。'
+            return voice ? '语音已送达当前 QQ 会话。' : '文件已送达当前 QQ 会话。'
           } catch (error) {
             return fileSent ? '请在 QQ 确认文件投递状态。' : error instanceof Error ? error.message : '文件发送失败。'
           }
         })()
-        fileAttempts.set(id, attempt)
+        fileAttempts.set(key, attempt)
         return attempt
       }
       const reply = await this.bridge.reply(message, group, member, storedAttachments, stream ? delta => {

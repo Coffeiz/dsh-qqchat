@@ -36,7 +36,7 @@ export declare class DshQQBridge {
     dispose(): Promise<void>;
     ensureChatSession(chatType: ChatType, row: GroupRow | MemberRow): Promise<string>;
     recordTranscript(event: QQChatDisplayEvent, row: GroupRow | MemberRow, createSession?: boolean): Promise<string | undefined>;
-    reply(message: QQNormalizedMessage, group: GroupRow | undefined, member: MemberRow, attachments?: StoredAttachmentSummary[], onTextDelta?: (delta: string) => void, isOwner?: boolean, sendFile?: (id: string, signal?: AbortSignal) => Promise<string>): Promise<string>;
+    reply(message: QQNormalizedMessage, group: GroupRow | undefined, member: MemberRow, attachments?: StoredAttachmentSummary[], onTextDelta?: (delta: string) => void, isOwner?: boolean, sendFile?: (id: string, voice: boolean, signal?: AbortSignal) => Promise<string>): Promise<string>;
     private onSessionEvent;
     private injectMemorySnapshot;
     private restoreMemorySnapshot;

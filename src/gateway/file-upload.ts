@@ -17,9 +17,9 @@ function uploadUrl(value: unknown): URL {
   return url
 }
 
-export async function uploadQQFile(post: Post, path: string, filename: string, data: Buffer, signal: AbortSignal): Promise<string> {
+export async function uploadQQFile(post: Post, path: string, filename: string, data: Buffer, signal: AbortSignal, fileType: 3 | 4 = 4): Promise<string> {
   const prepared = await post(`${path}/upload_prepare`, {
-    file_type: 4, file_name: filename, file_size: data.length, md5: md5(data),
+    file_type: fileType, file_name: filename, file_size: data.length, md5: md5(data),
     sha1: createHash('sha1').update(data).digest('hex'), md5_10m: md5(data.subarray(0, 10_002_432)),
   }, signal)
   const { upload_id: uploadId, parts } = prepared

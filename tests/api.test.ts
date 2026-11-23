@@ -193,3 +193,35 @@ test('QQ file upload confirms parts and sends media to the selected chat', async
     }
   }
 })
+
+test('QQ voice sends native voice media in private and group chats', async () => {
+  const { encode } = await import('silk-wasm')
+  const voice = Buffer.from((await encode(Buffer.alloc(9600), 24_000)).data)
+  const originalFetch = globalThis.fetch
+  const account = { id: 1, app_id: 'app', app_secret: 'secret', sandbox: false } as never
+  const api = new QQApiClient({} as never, {} as never)
+  for (const group of [false, true]) {
+    const calls: Array<{ path: string; body: Record<string, unknown> }> = []
+    globalThis.fetch = async (input, init) => {
+      const path = new URL(String(input)).pathname
+      if (path.includes('getAppAccessToken')) return response({ access_token: 'fixture', expires_in: 3600 })
+      calls.push({ path, body: JSON.parse(String(init?.body)) })
+      if (path.endsWith('/files')) return response({ file_info: 'voice-info' })
+      return response({ id: 'sent' })
+    }
+    try {
+      await api.sendVoice(account, 'target', voice, { group })
+      await api.sendVoice(account, 'target', voice, { group, messageId: 'incoming' })
+      const path = `/v2/${group ? 'groups' : 'users'}/target`
+      assert.deepEqual(calls.map(call => call.path), [`${path}/files`, `${path}/messages`, `${path}/files`, `${path}/messages`])
+      assert.deepEqual(calls[0]?.body, { file_type: 3, file_data: voice.toString('base64'), srv_send_msg: false })
+      assert.equal(calls[1]?.body.msg_type, 7)
+      assert.deepEqual(calls[1]?.body.media, { file_info: 'voice-info' })
+      assert.equal(calls[1]?.body.content, undefined)
+      assert.equal(calls[1]?.body.msg_id, undefined)
+      assert.equal(calls[3]?.body.msg_id, 'incoming')
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  }
+})

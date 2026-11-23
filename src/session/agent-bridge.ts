@@ -69,7 +69,7 @@ export class DshQQBridge {
   private readonly routes = new Map<string, { provider: string; model: string }>()
   private readonly selections = new Map<string, { ref: ModelSelectionRef; dispose: () => void }>()
   private readonly pendingResets = new Set<string>()
-  private readonly fileSenders = new Map<string, (id: string, signal?: AbortSignal) => Promise<string>>()
+  private readonly fileSenders = new Map<string, (id: string, voice: boolean, signal?: AbortSignal) => Promise<string>>()
   private readonly disposeFileTool: () => void
   private readonly activeActors = new Map<string, ActiveActor>()
   private readonly activeAttachments = new Map<string, Set<string>>()
@@ -112,18 +112,23 @@ export class DshQQBridge {
       }
     })
     const canReadMedia = (agentId: string, attachmentId: string) => this.activeMediaReadable.get(agentId) === true && this.activeAttachments.get(agentId)?.has(attachmentId) === true
-    this.disposeFileTool = ctx.tools.register(defineTool({
-      name: 'qqchat_send_file',
-      description: '把当前 QQ 消息中有权访问的附件发送回当前私聊或群聊。仅在用户明确要求发送时调用。',
+    const registerSendTool = (voice: boolean) => ctx.tools.register(defineTool({
+      name: voice ? 'qqchat_send_voice' : 'qqchat_send_file',
+      description: voice
+        ? '将当前 QQ 消息中有权访问的音频附件作为可播放的 QQ 语音条发送回当前会话。仅在用户明确要求发送语音时调用。'
+        : '把当前 QQ 消息中有权访问的附件发送回当前私聊或群聊。仅在用户明确要求发送时调用。',
       parameters: { attachment_id: { type: 'string', required: true, description: '当前 QQ 消息的附件 ID' } },
       output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
       execute: async ({ attachment_id }, exec) => {
         const agentId = String(exec.agent?.id || '')
         const send = this.fileSenders.get(agentId)
         if (!send || !canReadMedia(agentId, attachment_id)) return '当前 QQ 消息没有可发送的此附件。'
-        return send(attachment_id, exec.signal)
+        return send(attachment_id, voice, exec.signal)
       },
     }))
+    const disposeFile = registerSendTool(false)
+    const disposeVoice = registerSendTool(true)
+    this.disposeFileTool = () => { disposeVoice(); disposeFile() }
     this.disposeImageTool = registerQQImageTool(ctx, db, canReadMedia)
     this.disposeMediaTools = registerQQMediaTools(ctx, db, canReadMedia)
     this.disposeCommands = this.registerCommands()
@@ -175,7 +180,7 @@ export class DshQQBridge {
     return sessionId
   }
 
-  async reply(message: QQNormalizedMessage, group: GroupRow | undefined, member: MemberRow, attachments: StoredAttachmentSummary[] = [], onTextDelta?: (delta: string) => void, isOwner = message.chatType === 'c2c', sendFile?: (id: string, signal?: AbortSignal) => Promise<string>): Promise<string> {
+  async reply(message: QQNormalizedMessage, group: GroupRow | undefined, member: MemberRow, attachments: StoredAttachmentSummary[] = [], onTextDelta?: (delta: string) => void, isOwner = message.chatType === 'c2c', sendFile?: (id: string, voice: boolean, signal?: AbortSignal) => Promise<string>): Promise<string> {
     if (message.chatType === 'group' && !group) throw new Error('群消息缺少群上下文')
     const key = message.chatType === 'group' ? `g:${group!.id}` : `u:${member.id}`
     return this.serial(key, async () => {

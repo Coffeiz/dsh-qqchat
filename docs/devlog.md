@@ -125,3 +125,9 @@ npm run build
 Host 先初始化上传、通过腾讯 COS 签名地址写入分片并确认，最后用 `file_info` 发送富媒体消息。分片请求不携带 Bot 凭据。群聊被动回复明确被拒时复用上传结果，改走主动发送。投递结果未知时提示先核对 QQ。
 
 DSH Web 会话工具栏提供本地文件选择。Agent 的 `qqchat_send_file` 通过附件 ID 读取当前 QQ 消息获准访问的本地副本，发回同一会话。出站历史使用通用占位符记录成功投递。
+
+## 2026-11-23 · QQ 原生语音条发送
+
+参考[腾讯官方 Node.js SDK](https://github.com/tencent-connect/qqbot-nodejs/blob/main/src/QQBot.ts)，使用语音类型 3 上传，拿到 `file_info` 后通过富媒体消息投递。小语音直接上传，达到 5 MiB 的 SILK 语音复用分块上传。语音源上限 20 MiB。
+
+已有 SILK 音频直接使用。其他音频由 Host 的 FFmpeg 从管道解码成单声道 PCM，再用 silk-wasm 编码。转换限制为 5 分钟音频和 30 秒进程执行时间。Agent 工具沿用当前消息附件与群工具权限。

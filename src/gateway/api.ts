@@ -1,3 +1,4 @@
+import { prepareQQVoice } from '../media/voice.js'
 import { QQ_FILE_MAX_BYTES, uploadQQFile } from './file-upload.js'
 import type { QQChatDatabase } from '../storage/db.js'
 import type {
@@ -141,6 +142,18 @@ export class QQApiClient {
     account: AccountRow, targetId: string, filename: string, data: Buffer,
     { group = false, messageId = null }: QQSendOptions = {}, signal?: AbortSignal,
   ): Promise<void> {
+    return this.sendMedia(account, targetId, filename, data, 4, { group, messageId }, signal)
+  }
+
+  async sendVoice(account: AccountRow, targetId: string, data: Buffer, options: QQSendOptions = {}, signal?: AbortSignal): Promise<void> {
+    return this.sendMedia(account, targetId, 'voice.silk', await prepareQQVoice(data, signal), 3, options, signal)
+  }
+
+  private async sendMedia(
+    account: AccountRow, targetId: string, filename: string, data: Buffer, fileType: 3 | 4,
+    { group = false, messageId = null }: QQSendOptions, signal?: AbortSignal,
+  ): Promise<void> {
+    const label = fileType === 3 ? '语音' : '文件'
     if (!filename.trim() || filename.length > 255 || /[\x00-\x1f\x7f/\\]/.test(filename)) throw new Error('文件名无效')
     if (!data.length || data.length > QQ_FILE_MAX_BYTES) throw new Error('文件大小必须在 1 字节到 30 MiB 之间')
     const path = `/v2/${group ? 'groups' : 'users'}/${encodeURIComponent(targetId)}`
@@ -148,13 +161,22 @@ export class QQApiClient {
       this.request(account, 'POST', endpoint, body, false, signal ? AbortSignal.any([signal, deadline]) : deadline)
     let fileInfo: string
     try {
-      fileInfo = await uploadQQFile(post, path, filename, data, signal
-        ? AbortSignal.any([signal, AbortSignal.timeout(300_000)]) : AbortSignal.timeout(300_000))
+      const deadline = AbortSignal.timeout(300_000)
+      if (fileType === 3 && data.length < 5 * 1024 * 1024) {
+        const upload = await post(`${path}/files`, {
+          file_type: 3, file_data: data.toString('base64'), srv_send_msg: false,
+        }, deadline)
+        if (typeof upload.file_info !== 'string' || !upload.file_info) throw new Error('QQ 上传响应缺少媒体凭据')
+        fileInfo = upload.file_info
+      } else {
+        fileInfo = await uploadQQFile(post, path, filename, data, signal
+          ? AbortSignal.any([signal, deadline]) : deadline, fileType)
+      }
     } catch {
-      throw new Error('QQ 文件上传失败，请检查文件和机器人权限')
+      throw new Error(`QQ ${label}上传失败，请检查媒体和机器人权限`)
     }
     const deliver = (id: string | null) => post(`${path}/messages`, {
-      msg_type: 7, media: { file_info: fileInfo }, content: filename,
+      msg_type: 7, media: { file_info: fileInfo }, ...(fileType === 4 ? { content: filename } : {}),
       msg_seq: this.nextSeq(id), ...(id ? { msg_id: id } : {}),
     }, AbortSignal.timeout(20_000))
     let result
@@ -167,11 +189,11 @@ export class QQApiClient {
       }
     } catch (error) {
       if (error instanceof QQFileRequestError && error.status >= 400 && error.status < 500 && error.status !== 408) {
-        throw new Error(`QQ 拒绝文件消息（HTTP ${error.status}）`)
+        throw new Error(`QQ 拒绝${label}消息（HTTP ${error.status}）`)
       }
-      throw new Error('QQ 文件投递结果未知，请先在 QQ 确认是否送达')
+      throw new Error(`QQ ${label}投递结果未知，请先在 QQ 确认是否送达`)
     }
-    if (typeof result.id !== 'string' || !result.id.trim()) throw new Error('QQ 文件投递结果未知，请先在 QQ 确认是否送达')
+    if (typeof result.id !== 'string' || !result.id.trim()) throw new Error(`QQ ${label}投递结果未知，请先在 QQ 确认是否送达`)
   }
 
   async sendText(

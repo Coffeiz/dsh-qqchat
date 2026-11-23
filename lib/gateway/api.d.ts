@@ -24,6 +24,8 @@ export declare class QQApiClient {
     private nextStreamSeq;
     private request;
     sendFile(account: AccountRow, targetId: string, filename: string, data: Buffer, { group, messageId }?: QQSendOptions, signal?: AbortSignal): Promise<void>;
+    sendVoice(account: AccountRow, targetId: string, data: Buffer, options?: QQSendOptions, signal?: AbortSignal): Promise<void>;
+    private sendMedia;
     sendText(account: AccountRow, targetId: string, text: string, { group, messageId, format }?: QQSendOptions): Promise<Record<string, unknown>>;
     sendReplyWithActiveFallback(account: AccountRow, targetId: string, text: string, options: QQSendOptions): Promise<Record<string, unknown>>;
     createPrivateTextStream(account: AccountRow, targetId: string, { messageId }?: Pick<QQSendOptions, 'messageId'>): QQPrivateTextStream;
