@@ -1,3 +1,5 @@
+import { prepareQQVoice } from '../media/voice.js'
+import { QQ_FILE_MAX_BYTES, uploadQQFile } from './file-upload.js'
 import type { QQChatDatabase } from '../storage/db.js'
 import type {
   AccountRow,
@@ -55,14 +57,16 @@ export class QQApiClient {
 
   clearToken(accountId: number): void { this.tokens.delete(Number(accountId)) }
 
-  async token(account: AccountRow): Promise<string> {
+  async token(account: AccountRow, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted()
     const id = Number(account.id)
     const cached = this.tokens.get(id)
     if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token
+    const deadline = AbortSignal.timeout(15_000)
     const response = await fetch(TOKEN_URL, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ appId: account.app_id, clientSecret: account.app_secret }),
-      signal: AbortSignal.timeout(15_000),
+      signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
     })
     const data = await safeJson<QQAccessTokenPayload>(response)
     if (!response.ok || !data?.access_token) throw new Error(`QQ access_token 获取失败: HTTP ${response.status}`)
@@ -109,26 +113,81 @@ export class QQApiClient {
     path: string,
     body: unknown,
     retry = true,
+    fileSignal?: AbortSignal,
   ): Promise<T> {
-    const token = await this.token(account)
+    const token = await this.token(account, fileSignal)
     const base = account.sandbox ? SANDBOX_API_BASE : API_BASE
     const response = await fetch(`${base}${path}`, {
       method,
       headers: { Authorization: `QQBot ${token}`, 'content-type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(20_000),
+      signal: fileSignal ?? AbortSignal.timeout(20_000),
     })
     const data = await safeJson<Record<string, unknown>>(response)
     if (response.status === 401 && retry) {
       this.clearToken(account.id)
-      return this.request<T>(account, method, path, body, false)
+      return this.request<T>(account, method, path, body, false, fileSignal)
     }
     if (!response.ok) {
+      if (fileSignal) {
+        const code = Number(data?.code ?? data?.err_code)
+        throw new QQFileRequestError(response.status, code)
+      }
       const code = data?.code ? ` code=${String(data.code)}` : ''
       const message = data?.message ? ` ${String(data.message)}` : ''
       throw new Error(`QQ API HTTP ${response.status}${code}${message}`)
     }
     return (data || {}) as T
+  }
+
+  async sendFile(
+    account: AccountRow, targetId: string, filename: string, data: Buffer,
+    { group = false, messageId = null }: QQSendOptions = {}, signal?: AbortSignal,
+  ): Promise<void> {
+    return this.sendMedia(account, targetId, filename, data, 4, { group, messageId }, signal)
+  }
+
+  async sendVoice(account: AccountRow, targetId: string, data: Buffer, options: QQSendOptions = {}, signal?: AbortSignal): Promise<void> {
+    return this.sendMedia(account, targetId, 'voice.silk', await prepareQQVoice(data, signal), 3, options, signal)
+  }
+
+  private async sendMedia(
+    account: AccountRow, targetId: string, filename: string, data: Buffer, fileType: 3 | 4,
+    { group = false, messageId = null }: QQSendOptions, signal?: AbortSignal,
+  ): Promise<void> {
+    const label = fileType === 3 ? '语音' : '文件'
+    if (!filename.trim() || filename.length > 255 || /[\x00-\x1f\x7f/\\]/.test(filename)) throw new Error('文件名无效')
+    if (!data.length || data.length > QQ_FILE_MAX_BYTES) throw new Error('文件大小必须在 1 字节到 30 MiB 之间')
+    const path = `/v2/${group ? 'groups' : 'users'}/${encodeURIComponent(targetId)}`
+    const post = (endpoint: string, body: unknown, deadline: AbortSignal) =>
+      this.request(account, 'POST', endpoint, body, endpoint !== `${path}/messages`, signal ? AbortSignal.any([signal, deadline]) : deadline)
+    let fileInfo: string
+    try {
+      const deadline = AbortSignal.timeout(300_000)
+      fileInfo = await uploadQQFile(post, path, filename, data,
+        signal ? AbortSignal.any([signal, deadline]) : deadline, fileType)
+    } catch {
+      throw new Error(`QQ ${label}上传失败，请检查媒体和机器人权限`)
+    }
+    const deliver = (id: string | null) => post(`${path}/messages`, {
+      msg_type: 7, media: { file_info: fileInfo }, ...(fileType === 4 ? { content: filename } : {}),
+      msg_seq: this.nextSeq(id), ...(id ? { msg_id: id } : {}),
+    }, AbortSignal.timeout(20_000))
+    let result
+    try {
+      try {
+        result = await deliver(messageId)
+      } catch (error) {
+        if (!group || !messageId || !(error instanceof QQFileRequestError) || !error.passiveRejected) throw error
+        result = await deliver(null)
+      }
+    } catch (error) {
+      if (error instanceof QQFileRequestError && error.status >= 400 && error.status < 500 && error.status !== 408) {
+        throw new QQMediaDeliveryError(`QQ 拒绝${label}消息（HTTP ${error.status}）`)
+      }
+      throw new QQMediaDeliveryError(`QQ ${label}投递结果未知，请先在 QQ 确认是否送达`)
+    }
+    if (typeof result.id !== 'string' || !result.id.trim()) throw new QQMediaDeliveryError(`QQ ${label}投递结果未知，请先在 QQ 确认是否送达`)
   }
 
   async sendText(
@@ -262,3 +321,17 @@ export class QQApiClient {
 async function safeJson<T>(response: Response): Promise<T | undefined> {
   try { return await response.json() as T } catch { return undefined }
 }
+
+
+class QQFileRequestError extends Error {
+  constructor(readonly status: number, private readonly code: number) {
+    super(`QQ 文件接口返回 HTTP ${status}`)
+  }
+
+  get passiveRejected(): boolean {
+    return this.status >= 400 && this.status < 500 && this.status !== 408
+      && [40034005, 40034024, 40034031, 40034128].includes(this.code)
+  }
+}
+
+export class QQMediaDeliveryError extends Error {}

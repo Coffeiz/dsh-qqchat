@@ -1,3 +1,6 @@
+import { randomUUID } from 'node:crypto'
+import { QQ_VOICE_MAX_BYTES } from '../media/voice.js'
+import { QQ_FILE_MAX_BYTES } from '../gateway/file-upload.js'
 import type { ConnectionRpcHandler } from '@deepseek-ai/dsh-client-connection'
 import type { QQChatRuntime } from '../session/runtime.js'
 import type {
@@ -20,7 +23,16 @@ const ok = <T>(value: T): RpcSuccess<T> => ({ ok: true, value })
 const fail = (message: string): RpcFailure => ({ ok: false, error: { code: 'internal', message, details: {} } })
 
 export function createQQChatRpc(runtime: QQChatRuntime): ConnectionRpcHandler {
-  return async (endpoint, payload) => {
+  const uploads = new Map<string, {
+    chatType: ChatType; rowId: number; filename: string; voice: boolean
+    data: Buffer; offset: number; timer: ReturnType<typeof setTimeout>
+  }>()
+  const dropUpload = (id: string) => {
+    const upload = uploads.get(id)
+    if (upload) clearTimeout(upload.timer)
+    uploads.delete(id)
+  }
+  return async (endpoint, payload, signal) => {
     try {
       switch (endpoint) {
         case 'status':
@@ -104,6 +116,57 @@ export function createQQChatRpc(runtime: QQChatRuntime): ConnectionRpcHandler {
           const rowId = requireNumber(payload, 'rowId')
           const content = requireString(payload, 'content')
           return ok({ sessionId: await runtime.sendActive(chatType, rowId, content) })
+        }
+        case 'chat/upload/start': {
+          const voice = asRecord(payload)?.voice === true
+          const limit = voice ? QQ_VOICE_MAX_BYTES : QQ_FILE_MAX_BYTES
+          const chatType = requireChatType(payload)
+          const rowId = requireNumber(payload, 'rowId')
+          const filename = requireString(payload, 'filename')
+          const size = requireNumber(payload, 'size')
+          if (size > limit) throw new Error(`文件超过 ${limit / 1024 / 1024} MiB`)
+          if (uploads.size >= 2) throw new Error('正在传输的文件过多，请稍后再试')
+          const id = randomUUID()
+          const timer = setTimeout(() => dropUpload(id), 300_000)
+          timer.unref()
+          uploads.set(id, { chatType, rowId, filename, voice, data: Buffer.alloc(size), offset: 0, timer })
+          return ok({ id })
+        }
+        case 'chat/upload/part': {
+          const id = requireString(payload, 'id')
+          const upload = uploads.get(id)
+          const input = asRecord(payload)
+          const bytes = input?.bytes
+          if (!upload) throw new Error('文件传输不存在或已过期')
+          if (upload.offset < 0 || input?.offset !== upload.offset || !Array.isArray(bytes) || !bytes.length
+            || bytes.length > 128 * 1024 || bytes.length > upload.data.length - upload.offset
+            || bytes.some(byte => !Number.isInteger(byte) || byte < 0 || byte > 255)) {
+            throw new Error('文件分片无效')
+          }
+          upload.data.set(bytes, upload.offset)
+          upload.offset += bytes.length
+          upload.timer.refresh()
+          return ok({})
+        }
+        case 'chat/upload/finish': {
+          const id = requireString(payload, 'id')
+          const upload = uploads.get(id)
+          if (!upload || upload.offset !== upload.data.length) throw new Error('文件传输不完整或已过期')
+          // 保留名额直到 QQ 投递结束。先标记已消费，防止重复提交。
+          upload.offset = -1
+          clearTimeout(upload.timer)
+          try {
+            const deadline = AbortSignal.any([signal, AbortSignal.timeout(300_000)])
+            await runtime.sendActiveFile(upload.chatType, upload.rowId, upload.filename, upload.data, upload.voice, deadline)
+          } finally {
+            dropUpload(id)
+          }
+          return ok({})
+        }
+        case 'chat/upload/cancel': {
+          const id = requireString(payload, 'id')
+          if (uploads.get(id)?.offset !== -1) dropUpload(id)
+          return ok({})
         }
         case 'attachment/read': {
           const sessionId = requireString(payload, 'sessionId')

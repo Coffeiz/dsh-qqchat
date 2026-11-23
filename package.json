@@ -1,6 +1,6 @@
 {
   "name": "dsh-qqchat",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "description": "DeepSeek Harness 的 QQ 私聊/群聊插件，支持扫码授权、原生 Session、群记忆与工具权限。",
   "type": "module",
   "license": "MIT",
@@ -43,7 +43,8 @@
     "prepublishOnly": "npm run check"
   },
   "dependencies": {
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "silk-wasm": "^3.7.1"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

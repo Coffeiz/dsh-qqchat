@@ -9,6 +9,7 @@ import type { CommandInvocation, CommandRuntime, CommandResult } from '@deepseek
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { PreToolDecision } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-tools'
 import '../shared/augmentations.js'
@@ -45,6 +46,9 @@ interface WorkspaceRegistryService {
   resolveByPath(path: string): Promise<{ attachSession(sessionId: import('@deepseek-ai/dsh-session').SessionId): Promise<void> } | undefined>
 }
 interface Composition { presetId?: string; setup?: AgentSetup }
+export type QQFileSource = { attachmentId: string } | { path: string; workspace: string }
+type QQFileSender = (source: QQFileSource, voice: boolean, signal?: AbortSignal) => Promise<string>
+
 interface ActiveActor { chatType: ChatType; senderId: string }
 
 export function resolveQQSessionPreset(header: Session['header'], events: readonly SessionEvent[]): string | undefined {
@@ -68,6 +72,8 @@ export class DshQQBridge {
   private readonly routes = new Map<string, { provider: string; model: string }>()
   private readonly selections = new Map<string, { ref: ModelSelectionRef; dispose: () => void }>()
   private readonly pendingResets = new Set<string>()
+  private readonly fileSenders = new Map<string, { send: QQFileSender; workspace?: string }>()
+  private readonly disposeFileTool: () => void
   private readonly activeActors = new Map<string, ActiveActor>()
   private readonly activeAttachments = new Map<string, Set<string>>()
   private readonly activeMediaReadable = new Map<string, boolean>()
@@ -109,6 +115,37 @@ export class DshQQBridge {
       }
     })
     const canReadMedia = (agentId: string, attachmentId: string) => this.activeMediaReadable.get(agentId) === true && this.activeAttachments.get(agentId)?.has(attachmentId) === true
+    const registerSendTool = (voice: boolean) => ctx.tools.register(defineTool({
+      name: voice ? 'qqchat_send_voice' : 'qqchat_send_file',
+      description: voice
+        ? '将当前消息中的音频附件或工作区内的音频文件作为 QQ 语音条发回当前会话。attachment_id 与 path 二选一。私聊与群聊均仅 Owner 可使用 path。仅在用户明确要求发送语音时调用。'
+        : '发送当前消息附件或当前 DSH 工作区内的文件到当前 QQ 会话。attachment_id 与 path 二选一。私聊与群聊均仅 Owner 可使用 path。仅在用户明确要求发送时调用。',
+      parameters: {
+        attachment_id: { type: 'string', description: '当前 QQ 消息的附件 ID' },
+        path: { type: 'string', description: '当前工作区内的文件路径' },
+      },
+      output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+      execute: async ({ attachment_id, path }, exec) => {
+        const agentId = String(exec.agent?.id || '')
+        const sender = this.fileSenders.get(agentId)
+        if (!sender) return '当前没有可发送文件的 QQ 会话。'
+        if ((path === undefined) === (attachment_id === undefined)) return 'attachment_id 与 path 必须且只能提供一个。'
+        if (typeof path === 'string') {
+          const actor = this.activeActors.get(agentId)
+          const owner = this.db.runtimeSettings(defaultRuntimeSettings(this.config)).ownerUserId
+          if (!actor || !owner || owner !== actor.senderId) {
+            return '仅 Owner 可以发送工作区文件。'
+          }
+          if (!sender.workspace) return '当前 DSH 会话没有工作区路径。'
+          return sender.send({ path, workspace: sender.workspace }, voice, exec.signal)
+        }
+        if (typeof attachment_id !== 'string' || !attachment_id || !canReadMedia(agentId, attachment_id)) return '当前 QQ 消息没有可发送的此附件。'
+        return sender.send({ attachmentId: attachment_id }, voice, exec.signal)
+      },
+    }))
+    const disposeFile = registerSendTool(false)
+    const disposeVoice = registerSendTool(true)
+    this.disposeFileTool = () => { disposeVoice(); disposeFile() }
     this.disposeImageTool = registerQQImageTool(ctx, db, canReadMedia)
     this.disposeMediaTools = registerQQMediaTools(ctx, db, canReadMedia)
     this.disposeCommands = this.registerCommands()
@@ -129,6 +166,8 @@ export class DshQQBridge {
     this.disposeAssistantStream()
     this.disposeToolGate()
     this.disposeImageTool()
+    this.disposeFileTool()
+    this.fileSenders.clear()
     this.disposeMediaTools()
     this.disposeCommands()
     for (const handle of this.handles.values()) {
@@ -158,7 +197,7 @@ export class DshQQBridge {
     return sessionId
   }
 
-  async reply(message: QQNormalizedMessage, group: GroupRow | undefined, member: MemberRow, attachments: StoredAttachmentSummary[] = [], onTextDelta?: (delta: string) => void, isOwner = message.chatType === 'c2c'): Promise<string> {
+  async reply(message: QQNormalizedMessage, group: GroupRow | undefined, member: MemberRow, attachments: StoredAttachmentSummary[] = [], onTextDelta?: (delta: string) => void, isOwner = message.chatType === 'c2c', sendFile?: QQFileSender): Promise<string> {
     if (message.chatType === 'group' && !group) throw new Error('群消息缺少群上下文')
     const key = message.chatType === 'group' ? `g:${group!.id}` : `u:${member.id}`
     return this.serial(key, async () => {
@@ -217,11 +256,13 @@ export class DshQQBridge {
         || (settings.ownerUserId !== '' && settings.ownerUserId === message.senderId)
         || settings.groupMembersCanReadMedia)
       this.activeActors.set(String(sessionId), { chatType: message.chatType, senderId: message.senderId })
+      if (sendFile) this.fileSenders.set(String(sessionId), { send: sendFile, workspace: agent.session.header.cwd })
       try {
         agent.followup(current)
         await agent.whenIdle()
       } finally {
         this.activeActors.delete(String(sessionId))
+        this.fileSenders.delete(String(sessionId))
         this.activeAttachments.delete(String(sessionId))
         this.activeMediaReadable.delete(String(sessionId))
       }
@@ -234,9 +275,7 @@ export class DshQQBridge {
       } else if (message.chatType === 'c2c' && route.provider && route.model) {
         this.memory.setMemberRoute(Number(member.id), route.provider, route.model, String(sessionId))
       }
-      const text = pending?.text.trim()
-      if (!text) throw new Error('DSH Agent 本轮没有产生可发送的文本回复')
-      return text
+      return pending?.text.trim() || ''
     })
   }
 

@@ -119,3 +119,27 @@ npm run typecheck
 npm test
 npm run build
 ```
+
+## 2026-11-23 · QQ 文件发送
+
+Host 先初始化上传、通过腾讯 COS 签名地址写入分片并确认，最后用 `file_info` 发送富媒体消息。分片请求不携带 Bot 凭据。群聊被动回复明确被拒时复用上传结果，改走主动发送。投递结果未知时提示先核对 QQ。
+
+DSH Web 会话工具栏提供本地文件选择。Agent 的 `qqchat_send_file` 通过附件 ID 读取当前 QQ 消息获准访问的本地副本，发回同一会话。出站历史使用通用占位符记录成功投递。
+
+## 2026-11-23 · QQ 原生语音条发送
+
+参考[腾讯官方 Node.js SDK](https://github.com/tencent-connect/qqbot-nodejs/blob/main/src/QQBot.ts)，使用语音类型 3 上传，拿到 `file_info` 后通过富媒体消息投递。语音与普通文件共用分块上传。语音源上限 20 MiB。
+
+已有 SILK 音频直接使用。其他音频由 Host 的 FFmpeg 从管道解码成单声道 PCM，再用 silk-wasm 编码。转换限制为 5 分钟音频和 30 秒进程执行时间。Agent 工具沿用当前消息附件与群工具权限。
+
+## 2026-11-23 · PR #12 媒体投递审查修正
+
+文件与语音统一走 QQ 分块上传。Web 每次读取并传送 128 KiB 的分片，Host 校验偏移、长度与总大小，限制同时传输数量，并回收过期传输。上传控制请求收到 401 时刷新凭据，最终投递保留独立的失败状态。Agent 可再次尝试尚未进入投递阶段的失败。
+
+## 2026-11-23 · Agent 发送工作区文件
+
+`qqchat_send_file` 接受 `attachment_id` 或 `path`。以 DSH Session 的 `cwd` 为文件边界，检查真实路径并核对已打开文件。私聊与群聊路径发送均校验 Owner stable ID。文件复用现有分片上传及投递去重逻辑。
+
+`qqchat_send_voice` 同样支持工作区路径，沿用 Owner 与路径边界校验，读取后的音频通过语音转码和富媒体分片上传链路投递。
+
+第三轮审查修正：工作区路径发送必须匹配已配置的 Owner stable ID。Web 提交后使用独立的 5 分钟期限，取消信号传递到转码、Token 请求、分片上传和最终投递。

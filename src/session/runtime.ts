@@ -1,11 +1,14 @@
-import { readFile } from 'node:fs/promises'
+import { QQ_FILE_MAX_BYTES } from '../gateway/file-upload.js'
+import { open, readFile } from 'node:fs/promises'
 import type { Context } from '@deepseek-ai/cordis'
-import type { DshQQBridge } from './agent-bridge.js'
+import { basename } from 'node:path'
+import { resolveWorkspaceFile, openWorkspaceFile } from '../media/workspace-file.js'
+import type { DshQQBridge, QQFileSource } from './agent-bridge.js'
 import { defaultRuntimeSettings } from '../config.js'
 import type { QQChatDatabase } from '../storage/db.js'
 import type { QQChatLogger } from '../shared/logging.js'
 import type { MemoryEngine } from '../storage/memory.js'
-import type { QQApiClient } from '../gateway/api.js'
+import { QQMediaDeliveryError, type QQApiClient } from '../gateway/api.js'
 import type { QQBindService } from '../gateway/auth.js'
 import { QQGateway } from '../gateway/gateway.js'
 import { renderQQMentionNames } from '../gateway/normalize.js'
@@ -128,6 +131,21 @@ export class QQChatRuntime {
     this.logger.info?.(`[dsh-qqchat] active ${chatType} message sent to ${shortId(targetId)}`)
     if (!sessionId) throw new Error('未能建立 QQ Chat DSH session')
     return sessionId
+  }
+
+  async sendActiveFile(chatType: ChatType, rowId: number, filename: string, data: Buffer, voice = false, signal?: AbortSignal): Promise<void> {
+    const row = this.chatRow(chatType, rowId)
+    if (!row) throw new Error('QQ 会话不存在')
+    const account = this.db.accountById(Number(row.account_id))
+    if (!account) throw new Error('QQ 账号不存在')
+    const targetId = chatType === 'group' ? (row as GroupRow).platform_group_id : (row as MemberRow).platform_user_id
+    const options = { group: chatType === 'group' }
+    if (voice) await this.api.sendVoice(account, targetId, data, options, signal)
+    else await this.api.sendFile(account, targetId, filename, data, options, signal)
+    this.db.insertMessage({
+      accountId: Number(account.id), chatType, groupId: chatType === 'group' ? rowId : undefined,
+      memberId: chatType === 'c2c' ? rowId : undefined, direction: 'outbound', content: voice ? '[已发送语音]' : '[已发送文件]',
+    })
   }
 
   async readAttachment(sessionId: string, attachmentId: string): Promise<Record<string, unknown>> {
@@ -265,7 +283,62 @@ export class QQChatRuntime {
       const stream = message.chatType === 'c2c' && settings.directReplyFormat === 'markdown'
         ? this.api.createPrivateTextStream(account, targetId, { messageId: sendOptions.messageId })
         : undefined
-      const reply = await this.bridge.reply(message, group, member, storedAttachments, stream ? delta => stream.push(delta) : undefined, isOwner)
+      let fileSent = false
+      let streamedText = ''
+      const fileAttempts = new Map<string, Promise<string>>()
+      const sendFile = async (source: QQFileSource, voice: boolean, signal?: AbortSignal): Promise<string> => {
+        let filePath: string
+        let filename: string
+        let workspaceFile: Awaited<ReturnType<typeof resolveWorkspaceFile>> | undefined
+        let key: string
+        if ('path' in source) {
+          try {
+            workspaceFile = await resolveWorkspaceFile(source.workspace, source.path)
+            filePath = workspaceFile.path
+            filename = basename(filePath)
+            key = `${voice ? 'voice' : 'file'}:path:${filePath}`
+          } catch {
+            return '只能发送当前 DSH 工作区内可访问的普通文件。'
+          }
+        } else {
+          const attachment = storedAttachments.find(item => item.id === source.attachmentId)
+          if (!attachment?.localPath) return '此附件没有可发送的本地副本。'
+          filePath = attachment.localPath
+          filename = attachment.filename
+          key = `${voice ? 'voice' : 'file'}:${source.attachmentId}`
+        }
+        const previous = fileAttempts.get(key)
+        if (previous) return previous
+        const attempt = (async () => {
+          let delivered = false
+          try {
+            const data = await readOutboundAttachment(filePath, workspaceFile)
+            if (voice) await this.api.sendVoice(account, targetId, data, sendOptions, signal)
+            else await this.api.sendFile(account, targetId, filename, data, sendOptions, signal)
+            delivered = true
+            fileSent = true
+            this.db.insertMessage({
+              accountId: message.accountId, chatType: message.chatType, groupId: group?.id,
+              memberId: message.chatType === 'c2c' ? member.id : undefined, direction: 'outbound', content: voice ? '[已发送语音]' : '[已发送文件]',
+            })
+            return voice ? '语音已送达当前 QQ 会话。' : '文件已送达当前 QQ 会话。'
+          } catch (error) {
+            if (!delivered && !(error instanceof QQMediaDeliveryError)) fileAttempts.delete(key)
+            return delivered ? '已送达 QQ，但写入本地记录失败。' : error instanceof Error ? error.message : '文件发送失败。'
+          }
+        })()
+        fileAttempts.set(key, attempt)
+        return attempt
+      }
+      const reply = await this.bridge.reply(message, group, member, storedAttachments, stream ? delta => {
+        streamedText += delta
+        stream.push(delta)
+      } : undefined, isOwner, sendFile)
+      if (!reply) {
+        if (streamedText && stream) await stream.finish(streamedText)
+        if (fileSent) return
+        throw new Error('DSH Agent 本轮没有产生可发送的文本回复')
+      }
       if (stream) {
         try {
           await stream.finish(reply)
@@ -399,4 +472,29 @@ export function indexAttachments(inputs: QQAttachmentInput[], stored: StoredAtta
       ...(match ? { attachmentId: match.id } : {}),
     }
   })
+}
+
+
+async function readOutboundAttachment(path: string, workspaceFile?: Awaited<ReturnType<typeof resolveWorkspaceFile>>): Promise<Buffer> {
+  try {
+    const file = workspaceFile ? await openWorkspaceFile(workspaceFile) : await open(path, 'r')
+    try {
+      const stat = await file.stat()
+      if (!stat.isFile() || stat.size < 1 || stat.size > QQ_FILE_MAX_BYTES) {
+        throw new Error('文件大小无效')
+      }
+      const data = Buffer.alloc(stat.size)
+      let offset = 0
+      while (offset < data.length) {
+        const { bytesRead } = await file.read(data, offset, data.length - offset, offset)
+        if (!bytesRead) throw new Error('文件读取不完整')
+        offset += bytesRead
+      }
+      return data
+    } finally {
+      await file.close()
+    }
+  } catch {
+    throw new Error('文件不可用、无法读取或超过 30 MiB')
+  }
 }

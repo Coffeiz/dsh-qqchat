@@ -41,7 +41,7 @@
 | Quotes and mentions | Preserves quoted messages and resolves QQ mentions to display names | Stable IDs remain in metadata |
 | Memory system | Stores group, member and direct-user memory; user memory can be reused across groups under the same Bot | Group relationships and group events stay scoped; can be disabled |
 | Memory reflection | Converts recent daily notes into long-term memory | Runs asynchronously after idle or batch thresholds |
-| Media and file permissions | Separately controls receiving media, reading attachments, and regular tools | Owner and direct chats are unrestricted by default |
+| Media and file permissions | Separately controls receiving media, reading attachments, and regular tools | Group attachment and tool settings are independent of the Owner requirement for workspace paths |
 | Permission management | Separately controls group-member tools, media reading and file receiving | Owner is matched by stable user ID |
 | Native DSH commands | Runs `/compact`, `/goal`, `/plan`, `/qqmodel`, `/qqstatus` and more directly from QQ | Commands do not go through the model; `/qqhelp` lists the full set |
 | Native DSH UI | Uses the normal Session list, Conversation surface and composer styling | QQ Sessions remain ungrouped in DSH |
@@ -172,6 +172,14 @@ QQ Chat stores:
 - Direct-chat memory: long-term information about a direct QQ user.
 
 Reflection runs asynchronously after the chat is idle or enough messages have accumulated. The **QQ Memory** action at the top of a QQ Session shows group and member memory. Memory snapshots refresh when a Session starts, the memory context expires, or the Session is compacted; continuous conversation does not repeatedly write the full memory. Enabled memory may reduce context-cache hit rate or increase input tokens, and can be disabled under **Settings -> QQ Chat -> Memory system** without deleting stored data.
+
+## Send files and voice messages
+
+- **DSH Web**: Open a QQ direct or group session and use **Send file** or **Send voice** in the session header. File inputs are limited to 30 MiB and voice inputs to 20 MiB.
+- **Agent tools**: Ask the Agent to send a file with `qqchat_send_file` or a native QQ voice message with `qqchat_send_voice`. Each tool accepts exactly one of `attachment_id` for an authorized attachment from the current message or `path` for a file inside the current DSH session workspace. Only the configured Owner can use `path`, in both direct and group chats.
+- **Audio formats**: SILK can be sent directly. Other audio formats require FFmpeg on the DSH Host for conversion to SILK.
+
+The local QQ acceptance test for file and voice sending passed.
 
 ## Permission management
 

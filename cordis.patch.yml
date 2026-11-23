@@ -5,7 +5,3 @@
       name: dsh-qqchat
       config:
         dataDir: !!js dshHomePath('plugins/dsh-qqchat')
-
-# Connection RPC 需要 Web 启动配置和 Web Server 来配置 trusted hosts、注册 Host routes。
-- id: connection
-  inject: [webStartup, webServer]

@@ -71,6 +71,56 @@ function MemberMemory({ member, onBack }: { member: ChatMember; onBack(): void }
       h(MemoryCard, { title: '成员长期记忆 · memory', value: member.memory.memory })))
 }
 
+function QQSendFile({ sessionId, rpc, voice = false }: SessionUtilityProps & { rpc: Rpc; voice?: boolean }) {
+  const label = voice ? '语音' : '文件'
+  const limit = voice ? 20 : 30
+  const [open, setOpen] = useState(false)
+  const [file, setFile] = useState<File | null>(null)
+  const [sending, setSending] = useState(false)
+  const [status, setStatus] = useState('')
+  const send = async () => {
+    if (!file || sending) return
+    setSending(true)
+    setStatus('正在发送…')
+    try {
+      if (!file.size || file.size > limit * 1024 * 1024) throw new Error(`${label}大小必须在 1 字节到 ${limit} MiB 之间`)
+      const info = await call<ChatInfo>(rpc, 'chat/info', { sessionId })
+      const { id } = await call<{ id: string }>(rpc, 'chat/upload/start', {
+        chatType: info.chatType, rowId: info.rowId, filename: file.name, size: file.size, voice,
+      })
+      try {
+        const partSize = 128 * 1024
+        for (let offset = 0; offset < file.size; offset += partSize) {
+          const bytes = new Uint8Array(await file.slice(offset, offset + partSize).arrayBuffer())
+          await call(rpc, 'chat/upload/part', { id, offset, bytes: Array.from(bytes) })
+        }
+        await call(rpc, 'chat/upload/finish', { id })
+      } catch (error) {
+        void call(rpc, 'chat/upload/cancel', { id }).catch(() => {})
+        throw error
+      }
+      setFile(null)
+      setStatus(`${label}已发送。`)
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '文件发送失败。')
+    } finally {
+      setSending(false)
+    }
+  }
+  return h(React.Fragment, null,
+    h(Button, { size: 'sm', variant: 'outline', onClick: () => setOpen(true) }, `发送${label}`),
+    open ? h(Modal, { title: `向当前 QQ 会话发送${label}`, onClose: () => {
+      if (!sending) { setOpen(false); setFile(null); setStatus('') }
+    } }, h('div', null,
+      h('input', { type: 'file', accept: voice ? 'audio/*,.silk,.amr' : undefined, 'aria-label': `选择本地${label}`, disabled: sending,
+        onChange: (event: { currentTarget: HTMLInputElement }) => {
+          setFile(event.currentTarget.files?.[0] ?? null)
+          setStatus('')
+        } }),
+      h(Button, { disabled: !file || sending, onClick: () => void send() }, '发送'),
+      h('p', { role: 'status' }, status))) : null)
+}
+
 export function QQSessionUtility({ sessionId, rpc }: SessionUtilityProps & { rpc: Rpc }) {
   const [info, setInfo] = useState<ChatInfo | null>(null)
   const [open, setOpen] = useState(false)
@@ -120,6 +170,8 @@ export function QQSessionUtility({ sessionId, rpc }: SessionUtilityProps & { rpc
     : null
 
   return h(React.Fragment, null,
+    h(QQSendFile, { key: String(sessionId), sessionId, rpc }),
+    h(QQSendFile, { key: `voice:${sessionId}`, sessionId, rpc, voice: true }),
     h(Button, { size: 'sm', variant: 'outline', onClick: () => void show() }, 'QQ 记忆'),
     open && info
       ? h(Modal, {

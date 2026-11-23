@@ -5,6 +5,13 @@ import '../shared/augmentations.js';
 import type { QQChatDatabase } from '../storage/db.js';
 import type { MemoryEngine } from '../storage/memory.js';
 import type { ChatType, GroupRow, LoggerLike, MemberRow, StoredAttachmentSummary, QQChatConfig, QQChatDisplayEvent, QQNormalizedMessage } from '../types.js';
+export type QQFileSource = {
+    attachmentId: string;
+} | {
+    path: string;
+    workspace: string;
+};
+type QQFileSender = (source: QQFileSource, voice: boolean, signal?: AbortSignal) => Promise<string>;
 export declare function resolveQQSessionPreset(header: Session['header'], events: readonly SessionEvent[]): string | undefined;
 export declare class DshQQBridge {
     private readonly ctx;
@@ -18,6 +25,8 @@ export declare class DshQQBridge {
     private readonly routes;
     private readonly selections;
     private readonly pendingResets;
+    private readonly fileSenders;
+    private readonly disposeFileTool;
     private readonly activeActors;
     private readonly activeAttachments;
     private readonly activeMediaReadable;
@@ -34,7 +43,7 @@ export declare class DshQQBridge {
     dispose(): Promise<void>;
     ensureChatSession(chatType: ChatType, row: GroupRow | MemberRow): Promise<string>;
     recordTranscript(event: QQChatDisplayEvent, row: GroupRow | MemberRow, createSession?: boolean): Promise<string | undefined>;
-    reply(message: QQNormalizedMessage, group: GroupRow | undefined, member: MemberRow, attachments?: StoredAttachmentSummary[], onTextDelta?: (delta: string) => void, isOwner?: boolean): Promise<string>;
+    reply(message: QQNormalizedMessage, group: GroupRow | undefined, member: MemberRow, attachments?: StoredAttachmentSummary[], onTextDelta?: (delta: string) => void, isOwner?: boolean, sendFile?: QQFileSender): Promise<string>;
     private onSessionEvent;
     private injectMemorySnapshot;
     private restoreMemorySnapshot;
@@ -86,3 +95,4 @@ export declare function qqIncomingMessageSource(message: QQNormalizedMessage, is
     senderId: string;
     kind: "qq-chat";
 };
+export {};

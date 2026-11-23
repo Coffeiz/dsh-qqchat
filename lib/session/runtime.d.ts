@@ -3,7 +3,7 @@ import type { DshQQBridge } from './agent-bridge.js';
 import type { QQChatDatabase } from '../storage/db.js';
 import type { QQChatLogger } from '../shared/logging.js';
 import type { MemoryEngine } from '../storage/memory.js';
-import type { QQApiClient } from '../gateway/api.js';
+import { type QQApiClient } from '../gateway/api.js';
 import type { QQBindService } from '../gateway/auth.js';
 import { QQGateway } from '../gateway/gateway.js';
 import { QQMediaStore } from '../media/store.js';
@@ -29,6 +29,7 @@ export declare class QQChatRuntime {
     listChats(): ChatTargetRow[];
     ensureChatSession(chatType: ChatType, rowId: number): Promise<string>;
     sendActive(chatType: ChatType, rowId: number, content: string): Promise<string>;
+    sendActiveFile(chatType: ChatType, rowId: number, filename: string, data: Buffer, voice?: boolean, signal?: AbortSignal): Promise<void>;
     readAttachment(sessionId: string, attachmentId: string): Promise<Record<string, unknown>>;
     startGateway(account: AccountRow | undefined): void;
     restartGateway(accountId: number): Promise<void>;
