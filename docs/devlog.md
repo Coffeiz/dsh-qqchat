@@ -128,6 +128,10 @@ DSH Web 会话工具栏提供本地文件选择。Agent 的 `qqchat_send_file` �
 
 ## 2026-11-23 · QQ 原生语音条发送
 
-参考[腾讯官方 Node.js SDK](https://github.com/tencent-connect/qqbot-nodejs/blob/main/src/QQBot.ts)，使用语音类型 3 上传，拿到 `file_info` 后通过富媒体消息投递。小语音直接上传，达到 5 MiB 的 SILK 语音复用分块上传。语音源上限 20 MiB。
+参考[腾讯官方 Node.js SDK](https://github.com/tencent-connect/qqbot-nodejs/blob/main/src/QQBot.ts)，使用语音类型 3 上传，拿到 `file_info` 后通过富媒体消息投递。语音与普通文件共用分块上传。语音源上限 20 MiB。
 
 已有 SILK 音频直接使用。其他音频由 Host 的 FFmpeg 从管道解码成单声道 PCM，再用 silk-wasm 编码。转换限制为 5 分钟音频和 30 秒进程执行时间。Agent 工具沿用当前消息附件与群工具权限。
+
+## 2026-11-23 · PR #12 媒体投递审查修正
+
+文件与语音统一走 QQ 分块上传。Web 每次读取并传送 128 KiB 的分片，Host 校验偏移、长度与总大小，限制同时传输数量，并回收过期传输。上传控制请求收到 401 时刷新凭据，最终投递保留独立的失败状态。Agent 可再次尝试尚未进入投递阶段的失败。

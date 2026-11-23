@@ -3,7 +3,7 @@ import type { DshQQBridge } from './agent-bridge.js';
 import type { QQChatDatabase } from '../storage/db.js';
 import type { QQChatLogger } from '../shared/logging.js';
 import type { MemoryEngine } from '../storage/memory.js';
-import type { QQApiClient } from '../gateway/api.js';
+import { type QQApiClient } from '../gateway/api.js';
 import type { QQBindService } from '../gateway/auth.js';
 import { QQGateway } from '../gateway/gateway.js';
 import { QQMediaStore } from '../media/store.js';

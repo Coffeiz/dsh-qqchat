@@ -205,7 +205,9 @@ test('QQ voice sends native voice media in private and group chats', async () =>
     globalThis.fetch = async (input, init) => {
       const path = new URL(String(input)).pathname
       if (path.includes('getAppAccessToken')) return response({ access_token: 'fixture', expires_in: 3600 })
+      if (init?.method === 'PUT') return response({})
       calls.push({ path, body: JSON.parse(String(init?.body)) })
+      if (path.endsWith('/upload_prepare')) return response({ upload_id: 'upload', block_size: voice.length, parts: [{ index: 1, presigned_url: 'https://bucket.myqcloud.com/part' }] })
       if (path.endsWith('/files')) return response({ file_info: 'voice-info' })
       return response({ id: 'sent' })
     }
@@ -213,15 +215,46 @@ test('QQ voice sends native voice media in private and group chats', async () =>
       await api.sendVoice(account, 'target', voice, { group })
       await api.sendVoice(account, 'target', voice, { group, messageId: 'incoming' })
       const path = `/v2/${group ? 'groups' : 'users'}/target`
-      assert.deepEqual(calls.map(call => call.path), [`${path}/files`, `${path}/messages`, `${path}/files`, `${path}/messages`])
-      assert.deepEqual(calls[0]?.body, { file_type: 3, file_data: voice.toString('base64'), srv_send_msg: false })
-      assert.equal(calls[1]?.body.msg_type, 7)
-      assert.deepEqual(calls[1]?.body.media, { file_info: 'voice-info' })
-      assert.equal(calls[1]?.body.content, undefined)
-      assert.equal(calls[1]?.body.msg_id, undefined)
-      assert.equal(calls[3]?.body.msg_id, 'incoming')
+      assert.deepEqual(calls.map(call => call.path), ['upload_prepare', 'upload_part_finish', 'files', 'messages', 'upload_prepare', 'upload_part_finish', 'files', 'messages'].map(stage => `${path}/${stage}`))
+      assert.equal(calls[0]?.body.file_type, 3)
+      assert.equal(calls[0]?.body.file_size, voice.length)
+      assert.equal(calls[3]?.body.msg_type, 7)
+      assert.deepEqual(calls[3]?.body.media, { file_info: 'voice-info' })
+      assert.equal(calls[3]?.body.content, undefined)
+      assert.equal(calls[3]?.body.msg_id, undefined)
+      assert.equal(calls[7]?.body.msg_id, 'incoming')
     } finally {
       globalThis.fetch = originalFetch
     }
+  }
+})
+
+test('文件上传明确返回 401 时刷新 Token，最终投递超时只请求一次', async () => {
+  const originalFetch = globalThis.fetch
+  let tokens = 0
+  let prepares = 0
+  let deliveries = 0
+  globalThis.fetch = async (input, init) => {
+    const path = new URL(String(input)).pathname
+    if (path.includes('getAppAccessToken')) return response({ access_token: `fixture-${++tokens}`, expires_in: 3600 })
+    if (path.endsWith('/upload_prepare')) {
+      if (++prepares === 1) return new Response('{}', { status: 401 })
+      assert.equal(new Headers(init?.headers).get('authorization'), 'QQBot fixture-2')
+      return response({ upload_id: 'upload', block_size: 8, parts: [{ index: 1, presigned_url: 'https://bucket.myqcloud.com/part' }] })
+    }
+    if (path.endsWith('/files')) return response({ file_info: 'file-info' })
+    if (path.endsWith('/messages')) {
+      deliveries++
+      throw new DOMException('测试超时', 'TimeoutError')
+    }
+    return response({})
+  }
+  try {
+    const api = new QQApiClient({} as never, {} as never)
+    const account = { id: 1, app_id: 'app', app_secret: 'fixture', sandbox: false } as never
+    await assert.rejects(api.sendFile(account, 'target', 'fixture.txt', Buffer.from('fixture'), { group: true, messageId: 'incoming' }), /投递结果未知/)
+    assert.deepEqual([tokens, prepares, deliveries], [2, 2, 1])
+  } finally {
+    globalThis.fetch = originalFetch
   }
 })

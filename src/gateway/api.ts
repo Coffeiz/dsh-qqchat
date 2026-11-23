@@ -158,20 +158,12 @@ export class QQApiClient {
     if (!data.length || data.length > QQ_FILE_MAX_BYTES) throw new Error('文件大小必须在 1 字节到 30 MiB 之间')
     const path = `/v2/${group ? 'groups' : 'users'}/${encodeURIComponent(targetId)}`
     const post = (endpoint: string, body: unknown, deadline: AbortSignal) =>
-      this.request(account, 'POST', endpoint, body, false, signal ? AbortSignal.any([signal, deadline]) : deadline)
+      this.request(account, 'POST', endpoint, body, endpoint !== `${path}/messages`, signal ? AbortSignal.any([signal, deadline]) : deadline)
     let fileInfo: string
     try {
       const deadline = AbortSignal.timeout(300_000)
-      if (fileType === 3 && data.length < 5 * 1024 * 1024) {
-        const upload = await post(`${path}/files`, {
-          file_type: 3, file_data: data.toString('base64'), srv_send_msg: false,
-        }, deadline)
-        if (typeof upload.file_info !== 'string' || !upload.file_info) throw new Error('QQ 上传响应缺少媒体凭据')
-        fileInfo = upload.file_info
-      } else {
-        fileInfo = await uploadQQFile(post, path, filename, data, signal
-          ? AbortSignal.any([signal, deadline]) : deadline, fileType)
-      }
+      fileInfo = await uploadQQFile(post, path, filename, data,
+        signal ? AbortSignal.any([signal, deadline]) : deadline, fileType)
     } catch {
       throw new Error(`QQ ${label}上传失败，请检查媒体和机器人权限`)
     }
@@ -189,11 +181,11 @@ export class QQApiClient {
       }
     } catch (error) {
       if (error instanceof QQFileRequestError && error.status >= 400 && error.status < 500 && error.status !== 408) {
-        throw new Error(`QQ 拒绝${label}消息（HTTP ${error.status}）`)
+        throw new QQMediaDeliveryError(`QQ 拒绝${label}消息（HTTP ${error.status}）`)
       }
-      throw new Error(`QQ ${label}投递结果未知，请先在 QQ 确认是否送达`)
+      throw new QQMediaDeliveryError(`QQ ${label}投递结果未知，请先在 QQ 确认是否送达`)
     }
-    if (typeof result.id !== 'string' || !result.id.trim()) throw new Error(`QQ ${label}投递结果未知，请先在 QQ 确认是否送达`)
+    if (typeof result.id !== 'string' || !result.id.trim()) throw new QQMediaDeliveryError(`QQ ${label}投递结果未知，请先在 QQ 确认是否送达`)
   }
 
   async sendText(
@@ -339,3 +331,5 @@ class QQFileRequestError extends Error {
       && [40034005, 40034024, 40034031, 40034128].includes(this.code)
   }
 }
+
+export class QQMediaDeliveryError extends Error {}

@@ -6,7 +6,7 @@ import { defaultRuntimeSettings } from '../config.js'
 import type { QQChatDatabase } from '../storage/db.js'
 import type { QQChatLogger } from '../shared/logging.js'
 import type { MemoryEngine } from '../storage/memory.js'
-import type { QQApiClient } from '../gateway/api.js'
+import { QQMediaDeliveryError, type QQApiClient } from '../gateway/api.js'
 import type { QQBindService } from '../gateway/auth.js'
 import { QQGateway } from '../gateway/gateway.js'
 import { renderQQMentionNames } from '../gateway/normalize.js'
@@ -291,10 +291,12 @@ export class QQChatRuntime {
         const attachment = storedAttachments.find(item => item.id === id)
         if (!attachment?.localPath) return Promise.resolve('此附件没有可发送的本地副本。')
         const attempt = (async () => {
+          let delivered = false
           try {
             const data = await readOutboundAttachment(attachment.localPath!)
             if (voice) await this.api.sendVoice(account, targetId, data, sendOptions, signal)
             else await this.api.sendFile(account, targetId, attachment.filename, data, sendOptions, signal)
+            delivered = true
             fileSent = true
             this.db.insertMessage({
               accountId: message.accountId, chatType: message.chatType, groupId: group?.id,
@@ -302,7 +304,8 @@ export class QQChatRuntime {
             })
             return voice ? '语音已送达当前 QQ 会话。' : '文件已送达当前 QQ 会话。'
           } catch (error) {
-            return fileSent ? '请在 QQ 确认文件投递状态。' : error instanceof Error ? error.message : '文件发送失败。'
+            if (!delivered && !(error instanceof QQMediaDeliveryError)) fileAttempts.delete(key)
+            return delivered ? '已送达 QQ，但写入本地记录失败。' : error instanceof Error ? error.message : '文件发送失败。'
           }
         })()
         fileAttempts.set(key, attempt)
@@ -462,8 +465,12 @@ async function readOutboundAttachment(path: string): Promise<Buffer> {
         throw new Error('文件大小无效')
       }
       const data = Buffer.alloc(stat.size)
-      const { bytesRead } = await file.read({ buffer: data, position: 0 })
-      if (bytesRead !== stat.size) throw new Error('文件读取不完整')
+      let offset = 0
+      while (offset < data.length) {
+        const { bytesRead } = await file.read(data, offset, data.length - offset, offset)
+        if (!bytesRead) throw new Error('文件读取不完整')
+        offset += bytesRead
+      }
       return data
     } finally {
       await file.close()

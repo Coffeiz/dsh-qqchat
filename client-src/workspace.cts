@@ -85,12 +85,20 @@ function QQSendFile({ sessionId, rpc, voice = false }: SessionUtilityProps & { r
     try {
       if (!file.size || file.size > limit * 1024 * 1024) throw new Error(`${label}大小必须在 1 字节到 ${limit} MiB 之间`)
       const info = await call<ChatInfo>(rpc, 'chat/info', { sessionId })
-      const bytes = new Uint8Array(await file.arrayBuffer())
-      const chunks: string[] = []
-      for (let i = 0; i < bytes.length; i += 24_576) {
-        chunks.push(btoa(String.fromCharCode(...bytes.subarray(i, i + 24_576))))
+      const { id } = await call<{ id: string }>(rpc, 'chat/upload/start', {
+        chatType: info.chatType, rowId: info.rowId, filename: file.name, size: file.size, voice,
+      })
+      try {
+        const partSize = 128 * 1024
+        for (let offset = 0; offset < file.size; offset += partSize) {
+          const bytes = new Uint8Array(await file.slice(offset, offset + partSize).arrayBuffer())
+          await call(rpc, 'chat/upload/part', { id, offset, bytes: Array.from(bytes) })
+        }
+        await call(rpc, 'chat/upload/finish', { id })
+      } catch (error) {
+        void call(rpc, 'chat/upload/cancel', { id }).catch(() => {})
+        throw error
       }
-      await call(rpc, voice ? 'chat/send-voice' : 'chat/send-file', { chatType: info.chatType, rowId: info.rowId, filename: file.name, base64: chunks.join('') })
       setFile(null)
       setStatus(`${label}已发送。`)
     } catch (error) {
