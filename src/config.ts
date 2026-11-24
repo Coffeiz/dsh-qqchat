@@ -55,6 +55,7 @@ export function defaultRuntimeSettings(config: QQChatConfig): QQChatRuntimeSetti
     groupMembersCanUseTools: false,
     groupMembersCanReceiveMedia: true,
     groupMembersCanReadMedia: false,
+    showToolActivity: true,
     ownerUserId: '',
   }
 }

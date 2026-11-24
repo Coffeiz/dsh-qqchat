@@ -44,7 +44,7 @@ export async function apply(ctx: Context, inputConfig: QQChatConfigInput = {}): 
   const auth = new QQBindService(db, config)
   const memory = new MemoryEngine(ctx, db, config, logger)
   const media = new QQMediaStore(db, ctx, logger)
-  const bridge = new DshQQBridge(ctx, db, memory, config, logger)
+  const bridge = new DshQQBridge(ctx, db, memory, config, api, logger)
   const runtime = new QQChatRuntime(ctx, db, api, auth, memory, bridge, config, logger, media)
 
   ctx.connection.rpc.handle('/qqchat', createQQChatRpc(runtime))

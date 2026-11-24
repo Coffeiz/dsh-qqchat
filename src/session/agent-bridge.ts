@@ -11,6 +11,7 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { PreToolDecision } from '@deepseek-ai/dsh-tools'
+import type { QQApiClient } from '../gateway/api.js'
 import type {} from '@deepseek-ai/dsh-tools'
 import '../shared/augmentations.js'
 import { appendQQChatPluginRecord } from './registration.js'
@@ -77,11 +78,13 @@ export class DshQQBridge {
   private readonly activeActors = new Map<string, ActiveActor>()
   private readonly activeAttachments = new Map<string, Set<string>>()
   private readonly activeMediaReadable = new Map<string, boolean>()
+  private readonly toolActivityQueues = new Map<string, Promise<void>>()
   private readonly memorySnapshots = new Map<string, MemorySnapshotState>()
   private warnedRecordWriterMissing = false
   private readonly disposeEvent: () => void
   private readonly disposeAssistantStream: () => void
   private readonly disposeToolGate: () => void
+  private readonly disposeToolResult: () => void
   private readonly disposeCommands: () => void
   private readonly disposeImageTool: () => void
   private readonly disposeMediaTools: () => void
@@ -91,6 +94,7 @@ export class DshQQBridge {
     private readonly db: QQChatDatabase,
     private readonly memory: MemoryEngine,
     private readonly config: QQChatConfig,
+    private readonly api: QQApiClient,
     private readonly logger: LoggerLike = console,
   ) {
     this.disposeEvent = ctx.on('session/event', (session, event) => this.onSessionEvent(session, event))
@@ -98,15 +102,35 @@ export class DshQQBridge {
       if (frame.type !== 'chunk' || frame.chunk.type !== 'text-delta' || !frame.chunk.text) return
       this.pending.get(String(agent.id))?.onTextDelta?.(frame.chunk.text)
     })
+    this.disposeToolResult = ctx.on('tools/result', (exec, result) => {
+      const agentId = String(exec.agent?.id || '')
+      if (!agentId || !this.db.runtimeSettings(defaultRuntimeSettings(this.config)).showToolActivity) return
+      const icon = result.isError ? '⚠️' : '✅'
+      void this.sendToolActivity(agentId, `${icon} 工具调用${result.isError ? '失败' : '完成'}：${exec.name}`)
+    })
     this.disposeToolGate = ctx.on('tools/pre-execute', async (exec, next): Promise<PreToolDecision> => {
       const agent = exec.agent
       if (!agent) return next()
-      const actor = this.activeActors.get(String(agent.id))
-      if (!actor || actor.chatType !== 'group') return next()
+      const agentId = String(agent.id)
+      const actor = this.activeActors.get(agentId)
       const settings = this.db.runtimeSettings(defaultRuntimeSettings(this.config))
-      if (settings.groupMembersCanUseTools) return next()
-      if (settings.ownerUserId && settings.ownerUserId === actor.senderId) return next()
-      if (MEDIA_TOOL_NAMES.has(exec.name) && settings.groupMembersCanReadMedia) return next()
+      if (!actor || actor.chatType !== 'group') {
+        const decision = await next()
+        if (actor && settings.showToolActivity && decision.kind === 'allow') {
+          void this.sendToolActivity(agentId, `🔧 正在调用工具：${exec.name}`)
+        }
+        return decision
+      }
+      const allowed = settings.groupMembersCanUseTools
+        || (settings.ownerUserId !== '' && settings.ownerUserId === actor.senderId)
+        || (MEDIA_TOOL_NAMES.has(exec.name) && settings.groupMembersCanReadMedia)
+      if (allowed) {
+        const decision = await next()
+        if (settings.showToolActivity && decision.kind === 'allow') {
+          void this.sendToolActivity(agentId, `🔧 正在调用工具：${exec.name}`)
+        }
+        return decision
+      }
       return {
         kind: 'deny',
         reason: settings.ownerUserId
@@ -165,6 +189,7 @@ export class DshQQBridge {
     this.disposeEvent()
     this.disposeAssistantStream()
     this.disposeToolGate()
+    this.disposeToolResult()
     this.disposeImageTool()
     this.disposeFileTool()
     this.fileSenders.clear()
@@ -277,6 +302,33 @@ export class DshQQBridge {
       }
       return pending?.text.trim() || ''
     })
+  }
+
+  private sendToolActivity(sessionId: string, text: string): void {
+    const previous = this.toolActivityQueues.get(sessionId) || Promise.resolve()
+    const pending = previous.then(() => this.deliverToolActivity(sessionId, text)).catch(() => undefined)
+    this.toolActivityQueues.set(sessionId, pending)
+    void pending.finally(() => {
+      if (this.toolActivityQueues.get(sessionId) === pending) this.toolActivityQueues.delete(sessionId)
+    })
+  }
+
+  private async deliverToolActivity(sessionId: string, text: string): Promise<void> {
+    const group = this.db.groupBySession(sessionId)
+    const member = group ? undefined : this.db.memberBySession(sessionId)
+    const row = group || member
+    if (!row) return
+    const account = this.db.accountById(Number(row.account_id))
+    if (!account) return
+    const settings = this.db.runtimeSettings(defaultRuntimeSettings(this.config))
+    const isGroup = Boolean(group)
+    const targetId = group ? group.platform_group_id : (member as MemberRow).platform_user_id
+    const format = isGroup ? settings.groupReplyFormat : settings.directReplyFormat
+    try {
+      await this.api.sendText(account, targetId, text, { group: isGroup, format })
+    } catch {
+      this.logger.warn?.('[dsh-qqchat] QQ 工具状态发送失败')
+    }
   }
 
   private onSessionEvent(session: Session, event: SessionEvent): void {
