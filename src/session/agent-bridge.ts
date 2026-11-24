@@ -50,7 +50,12 @@ interface Composition { presetId?: string; setup?: AgentSetup }
 export type QQFileSource = { attachmentId: string } | { path: string; workspace: string }
 type QQFileSender = (source: QQFileSource, voice: boolean, signal?: AbortSignal) => Promise<string>
 
-interface ActiveActor { chatType: ChatType; senderId: string }
+interface ActiveActor { chatType: ChatType; senderId: string; messageId: string; startedAt: number }
+
+const TOOL_ACTIVITY_PASSIVE_TTL_MS: Record<ChatType, number> = {
+  c2c: 30 * 60_000,
+  group: 5 * 60_000,
+}
 
 export function resolveQQSessionPreset(header: Session['header'], events: readonly SessionEvent[]): string | undefined {
   let current = header.agentPreset ?? null
@@ -104,7 +109,7 @@ export class DshQQBridge {
     })
     this.disposeToolResult = ctx.on('tools/result', (exec, result) => {
       const agentId = String(exec.agent?.id || '')
-      if (!agentId || !this.db.runtimeSettings(defaultRuntimeSettings(this.config)).showToolActivity) return
+      if (!agentId || !this.activeActors.has(agentId) || !this.db.runtimeSettings(defaultRuntimeSettings(this.config)).showToolActivity) return
       const icon = result.isError ? '⚠️' : '✅'
       void this.sendToolActivity(agentId, `${icon} 工具调用${result.isError ? '失败' : '完成'}：${exec.name}`)
     })
@@ -228,7 +233,10 @@ export class DshQQBridge {
     return this.serial(key, async () => {
       const row = message.chatType === 'group' ? group! : member
       const { agent, sessionId } = await this.ensureAgent(message.chatType, row)
-      this.activeActors.set(String(sessionId), { chatType: message.chatType, senderId: message.senderId })
+      this.activeActors.set(String(sessionId), {
+        chatType: message.chatType, senderId: message.senderId, messageId: message.messageId,
+        startedAt: inboundMessageTimestamp(message),
+      })
       try {
         const commands = (this.ctx as unknown as { commands?: CommandRuntime }).commands
         const commandText = qqCommandText(message.text, message.mentioned)
@@ -280,7 +288,10 @@ export class DshQQBridge {
       this.activeMediaReadable.set(String(sessionId), message.chatType !== 'group'
         || (settings.ownerUserId !== '' && settings.ownerUserId === message.senderId)
         || settings.groupMembersCanReadMedia)
-      this.activeActors.set(String(sessionId), { chatType: message.chatType, senderId: message.senderId })
+      this.activeActors.set(String(sessionId), {
+        chatType: message.chatType, senderId: message.senderId, messageId: message.messageId,
+        startedAt: inboundMessageTimestamp(message),
+      })
       if (sendFile) this.fileSenders.set(String(sessionId), { send: sendFile, workspace: agent.session.header.cwd })
       try {
         agent.followup(current)
@@ -305,15 +316,17 @@ export class DshQQBridge {
   }
 
   private sendToolActivity(sessionId: string, text: string): void {
+    const actor = this.activeActors.get(sessionId)
+    if (!actor) return
     const previous = this.toolActivityQueues.get(sessionId) || Promise.resolve()
-    const pending = previous.then(() => this.deliverToolActivity(sessionId, text)).catch(() => undefined)
+    const pending = previous.then(() => this.deliverToolActivity(sessionId, actor, text)).catch(() => undefined)
     this.toolActivityQueues.set(sessionId, pending)
     void pending.finally(() => {
       if (this.toolActivityQueues.get(sessionId) === pending) this.toolActivityQueues.delete(sessionId)
     })
   }
 
-  private async deliverToolActivity(sessionId: string, text: string): Promise<void> {
+  private async deliverToolActivity(sessionId: string, actor: ActiveActor, text: string): Promise<void> {
     const group = this.db.groupBySession(sessionId)
     const member = group ? undefined : this.db.memberBySession(sessionId)
     const row = group || member
@@ -321,11 +334,15 @@ export class DshQQBridge {
     const account = this.db.accountById(Number(row.account_id))
     if (!account) return
     const settings = this.db.runtimeSettings(defaultRuntimeSettings(this.config))
+    if (!settings.showToolActivity) return
+    if (Date.now() - actor.startedAt >= TOOL_ACTIVITY_PASSIVE_TTL_MS[actor.chatType]) return
     const isGroup = Boolean(group)
     const targetId = group ? group.platform_group_id : (member as MemberRow).platform_user_id
     const format = isGroup ? settings.groupReplyFormat : settings.directReplyFormat
     try {
-      await this.api.sendText(account, targetId, text, { group: isGroup, format })
+      await this.api.sendToolActivity(account, targetId, text, {
+        group: isGroup, messageId: actor.messageId, format,
+      })
     } catch {
       this.logger.warn?.('[dsh-qqchat] QQ 工具状态发送失败')
     }
@@ -689,6 +706,17 @@ export class DshQQBridge {
     this.locks.set(key, current)
     return current.finally(() => { if (this.locks.get(key) === current) this.locks.delete(key) })
   }
+}
+
+function inboundMessageTimestamp(message: QQNormalizedMessage): number {
+  const rawTimestamp = message.raw.timestamp
+  const numericTimestamp = typeof rawTimestamp === 'number'
+    ? (rawTimestamp < 1_000_000_000_000 ? rawTimestamp * 1000 : rawTimestamp)
+    : Number.NaN
+  const parsedTimestamp = typeof rawTimestamp === 'string' ? Date.parse(rawTimestamp) : numericTimestamp
+  return Number.isFinite(parsedTimestamp) && parsedTimestamp > 0 && parsedTimestamp <= Date.now()
+    ? parsedTimestamp
+    : Date.now()
 }
 
 function mediaPrompt(attachments: StoredAttachmentSummary[]): string {
