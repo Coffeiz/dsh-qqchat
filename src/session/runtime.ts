@@ -112,7 +112,10 @@ export class QQChatRuntime {
     if (!account) throw new Error('QQ 账号不存在')
     const targetId = chatType === 'group' ? (row as GroupRow).platform_group_id : (row as MemberRow).platform_user_id
     const settings = this.settings()
-    await this.api.sendText(account, targetId, text, { group: chatType === 'group', messageId: null, format: chatType === 'group' ? settings.groupReplyFormat : settings.directReplyFormat })
+    await this.api.sendText(account, targetId, text, {
+      group: chatType === 'group', messageId: null,
+      format: chatType === 'group' ? settings.groupReplyFormat : settings.directReplyFormat,
+    })
     const messageDbId = this.db.insertMessage({
       accountId: Number(account.id), chatType, groupId: chatType === 'group' ? Number(row.id) : undefined,
       memberId: chatType === 'c2c' ? Number(row.id) : undefined, direction: 'outbound', content: text,

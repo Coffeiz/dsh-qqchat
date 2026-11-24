@@ -7,7 +7,7 @@
 <p>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/DSH-0.2.2--alpha.3-6f42c1.svg" alt="DSH 0.2.2-alpha.3">
-  <img src="https://img.shields.io/badge/QQChat-0.2.13-2ea44f.svg" alt="QQChat 0.2.13">
+  <img src="https://img.shields.io/badge/QQChat-0.2.14-2ea44f.svg" alt="QQChat 0.2.14">
   <img src="https://img.shields.io/badge/TypeScript-5.x-3178c6.svg" alt="TypeScript">
 </p>
 
@@ -34,6 +34,7 @@
 | 手动连接 | 在设置页填写 AppID 和 AppSecret 连接 QQ Bot | 适合无手机、服务器或扫码失败场景；密钥只提交到 Host |
 | 断线重连 | QQ Gateway 断线后自动恢复连接 | 无需重复扫码 |
 | 群聊回复模式 | 自动回应、@回复、静默记录 | 可在设置页随时切换 |
+| 群聊 @ 提及 | 将语法有效的 `@ID`、`<@ID>` 转成 QQ 原生提及，不依赖本地成员列表 | 代码和 URL 中的 `@ID` 保持原样；Markdown 被拒时降级为可读纯文本 |
 | 消息格式 | Markdown、纯文本兼容 | 群聊与私聊可分别设置；群聊默认纯文本兼容 |
 | 私聊流式回复 | Markdown 格式自动使用 QQ 官方流式接口 | 纯文本兼容格式使用普通发送；部分客户端可能不可见 |
 | 消息引用与 @ | 支持引用消息和 QQ @消息 | @用户优先显示用户名 |
@@ -80,7 +81,7 @@
 
 推荐从 DSH 插件页面安装：打开 **插件 → 添加插件**，输入 `dsh-qqchat` 并选择安装。DSH 会将插件安装到当前部署中；无需在命令行安装。
 
-当前插件版本为 `0.2.13`。安装器不再按 DSH 内部包版本范围拦截插件；这只表示允许尝试安装，不代表所有 DSH 版本都已验证兼容。
+当前插件版本为 `0.2.14`。安装器不再按 DSH 内部包版本范围拦截插件；这只表示允许尝试安装，不代表所有 DSH 版本都已验证兼容。
 
 ## 第一次连接 QQ
 
@@ -193,7 +194,7 @@ QQ Session 使用 DSH 原生的 Agent Preset 机制。插件配置中的 preset 
 ## 注意事项
 
 - 需要 QQ 官方 Bot，不支持个人 QQ 账号登录。
-- 当前版本为 `0.2.13`，基于 DSH `0.2.2-alpha.3` 验证。
+- 当前版本为 `0.2.14`，基于 DSH `0.2.2-alpha.3` 验证。
 - 富媒体、完整 QQ 表情和部分复杂消息格式可能需要使用兼容模式。
 - 卸载插件不会自动删除已经保存的聊天和记忆数据。
 

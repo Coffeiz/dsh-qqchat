@@ -22,6 +22,80 @@ test('normal sends use only the selected Markdown or plain compatibility format'
   }
 })
 
+test('group mentions accept explicit IDs and force Markdown for compat chats', async () => {
+  const requests: Array<Record<string, unknown>> = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    if (String(input).includes('/app/getAppAccessToken')) return response({ access_token: 'token', expires_in: 3600 })
+    requests.push(JSON.parse(String(init?.body || '{}')) as Record<string, unknown>)
+    return response({ id: 'sent' })
+  }) as typeof fetch
+  try {
+    const api = new QQApiClient({} as never, { replyFormat: 'compat' } as never)
+    const account = { id: 1, app_id: 'app', app_secret: 'secret', sandbox: false } as never
+    await api.sendText(account, 'group-1', '@14C4D3EBED7843EFAC441D659C643BAE <@bot-1> <@!unknown-user> <qqbot-at-user id="raw-user" />', {
+      group: true, format: 'compat',
+    })
+    assert.equal(requests[0]?.msg_type, 2)
+    assert.deepEqual(requests[0]?.markdown, {
+      content: '<qqbot-at-user id="14C4D3EBED7843EFAC441D659C643BAE" /> <qqbot-at-user id="bot-1" /> <qqbot-at-user id="unknown-user" /> <qqbot-at-user id="raw-user" />',
+    })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('plain @IDs in code and URLs remain text while ordinary compat messages stay plain', async () => {
+  const requests: Array<Record<string, unknown>> = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    if (String(input).includes('/app/getAppAccessToken')) return response({ access_token: 'token', expires_in: 3600 })
+    requests.push(JSON.parse(String(init?.body || '{}')) as Record<string, unknown>)
+    return response({ id: 'sent' })
+  }) as typeof fetch
+  try {
+    const api = new QQApiClient({} as never, { replyFormat: 'compat' } as never)
+    const account = { id: 1, app_id: 'app', app_secret: 'secret', sandbox: false } as never
+    await api.sendText(account, 'group-1', '普通消息 @stranger', { group: true, format: 'compat' })
+    const markupExample = '标签示例 <qqbot-at-user id="bad id" />，代码 `<qqbot-at-user id="example-user" />`'
+    await api.sendText(account, 'group-1', markupExample, { group: true, format: 'compat' })
+    await api.sendText(account, 'group-1', '通知 @14C4D3EBED7843EFAC441D659C643BAE，示例 `@14C4D3EBED7843EFAC441D659C643BAE`，链接 https://example.test/@14C4D3EBED7843EFAC441D659C643BAE', { group: true, format: 'compat' })
+    assert.equal(requests[0]?.msg_type, 0)
+    assert.equal(requests[0]?.content, '普通消息 @stranger')
+    assert.equal(requests[1]?.msg_type, 0)
+    assert.equal(requests[1]?.content, markupExample)
+    assert.equal(requests[2]?.msg_type, 2)
+    assert.deepEqual(requests[2]?.markdown, {
+      content: '通知 <qqbot-at-user id="14C4D3EBED7843EFAC441D659C643BAE" />，示例 `@14C4D3EBED7843EFAC441D659C643BAE`，链接 https://example.test/@14C4D3EBED7843EFAC441D659C643BAE',
+    })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('Markdown permission fallback sends readable original text without QQ tags', async () => {
+  const requests: Array<Record<string, unknown>> = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    if (String(input).includes('/app/getAppAccessToken')) return response({ access_token: 'token', expires_in: 3600 })
+    requests.push(JSON.parse(String(init?.body || '{}')) as Record<string, unknown>)
+    return requests.length === 1
+      ? response({ message: 'markdown permission denied' }, 403)
+      : response({ id: 'sent' })
+  }) as typeof fetch
+  try {
+    const api = new QQApiClient({} as never, { replyFormat: 'compat' } as never)
+    await api.sendText({ id: 1, app_id: 'app', app_secret: 'secret', sandbox: false } as never,
+      'group-1', '你好 <@member-1>', { group: true, format: 'compat' })
+    assert.equal(requests[0]?.msg_type, 2)
+    assert.deepEqual(requests[0]?.markdown, { content: '你好 <qqbot-at-user id="member-1" />' })
+    assert.equal(requests[1]?.msg_type, 0)
+    assert.equal(requests[1]?.content, '你好 <@member-1>')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 test('private text stream sends start and finish parts with one stream id', async () => {
   const requests: Array<{ url: string; body: Record<string, unknown> }> = []
   const originalFetch = globalThis.fetch
