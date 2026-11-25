@@ -77,6 +77,7 @@ export class QQChatRuntime {
     if (patch.groupMembersCanUseTools !== undefined) this.db.setSetting('groupMembersCanUseTools', Boolean(patch.groupMembersCanUseTools))
     if (patch.groupMembersCanReceiveMedia !== undefined) this.db.setSetting('groupMembersCanReceiveMedia', Boolean(patch.groupMembersCanReceiveMedia))
     if (patch.groupMembersCanReadMedia !== undefined) this.db.setSetting('groupMembersCanReadMedia', Boolean(patch.groupMembersCanReadMedia))
+    if (patch.showToolActivity !== undefined) this.db.setSetting('showToolActivity', Boolean(patch.showToolActivity))
     if (patch.ownerUserId !== undefined) this.db.setSetting('ownerUserId', String(patch.ownerUserId).trim())
     const next = this.settings()
     this.logger.info?.('[dsh-qqchat] settings updated', next)

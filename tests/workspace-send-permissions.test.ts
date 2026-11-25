@@ -11,7 +11,7 @@ test('文件和语音工具在私聊与群聊均要求 Owner 才能使用路径'
     on: noop,
     commands: { register: noop },
     tools: { register(tool: Tool) { tools.set(tool.name, tool); return () => {} } },
-  } as never, { runtimeSettings: () => ({ ownerUserId }) } as never, {} as never, {} as never)
+  } as never, { runtimeSettings: () => ({ ownerUserId }) } as never, {} as never, {} as never, {} as never)
   const state = bridge as unknown as {
     activeActors: Map<string, { chatType: string; senderId: string }>
     fileSenders: Map<string, { workspace: string; send: (source: QQFileSource, voice: boolean) => Promise<string> }>

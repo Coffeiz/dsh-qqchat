@@ -168,6 +168,66 @@ test('private text streams use fresh msg_seq values across replies', async () =>
   }
 })
 
+test('tool activity uses passive private budget and reserves the final reply slot', async () => {
+  const requests: Array<Record<string, unknown>> = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    if (String(input).includes('/app/getAppAccessToken')) return response({ access_token: 'token', expires_in: 3600 })
+    requests.push(JSON.parse(String(init?.body || '{}')) as Record<string, unknown>)
+    return response({ stream_msg_id: `stream-${requests.length}` })
+  }) as typeof fetch
+  try {
+    const api = new QQApiClient({} as never, { replyFormat: 'markdown' } as never)
+    const account = { id: 1, app_id: 'app', app_secret: 'secret', sandbox: false } as never
+    for (let index = 0; index < 3; index++) {
+      assert.equal(await api.sendToolActivity(account, 'user-1', `工具 ${index}`, { messageId: 'incoming-private' }), true)
+    }
+    assert.equal(await api.sendToolActivity(account, 'user-1', '超出额度', { messageId: 'incoming-private' }), false)
+
+    const final = api.createPrivateTextStream(account, 'user-1', { messageId: 'incoming-private' })
+    await final.finish('最终答复')
+
+    const toolSeqs = requests.slice(0, 3).map(body => body.msg_seq)
+    const streamSeqs = requests.slice(3).map(body => body.msg_seq)
+    assert.equal(new Set(toolSeqs).size, 3)
+    assert.equal(new Set(streamSeqs).size, 1, '流式消息的各帧沿用同一个 msg_seq')
+    assert.ok(!toolSeqs.includes(streamSeqs[0]), '最终答复使用独立的 msg_seq')
+    assert.ok(requests.slice(3).every(body => body.msg_id === 'incoming-private'))
+    assert.equal(await api.sendToolActivity(account, 'user-1', '最终答复之后', { messageId: 'incoming-private' }), false)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('群聊工具提示按普通群被动额度节流并保留最终回复名额', async () => {
+  const requests: Array<Record<string, unknown>> = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    if (String(input).includes('/app/getAppAccessToken')) return response({ access_token: 'token', expires_in: 3600 })
+    requests.push(JSON.parse(String(init?.body || '{}')) as Record<string, unknown>)
+    return response({ id: 'sent' })
+  }) as typeof fetch
+  try {
+    const api = new QQApiClient({} as never, { replyFormat: 'compat' } as never)
+    const account = { id: 1, app_id: 'app', app_secret: 'secret', sandbox: false } as never
+    for (let index = 0; index < 4; index++) {
+      assert.equal(await api.sendToolActivity(account, 'group-1', `工具 ${index}`, {
+        group: true, messageId: 'incoming-group', format: 'compat',
+      }), true)
+    }
+    assert.equal(await api.sendToolActivity(account, 'group-1', '超出额度', {
+      group: true, messageId: 'incoming-group', format: 'compat',
+    }), false)
+    await api.sendText(account, 'group-1', '最终答复', {
+      group: true, messageId: 'incoming-group', format: 'compat',
+    })
+    assert.equal(requests.length, 5)
+    assert.equal(new Set(requests.map(body => body.msg_seq)).size, 5)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 test('queued private stream updates receive the stream id from the first response', async () => {
   const requests: Array<{ body: Record<string, unknown> }> = []
   const originalFetch = globalThis.fetch

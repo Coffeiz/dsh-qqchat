@@ -68,6 +68,7 @@ export interface QQChatRuntimeSettings {
   groupMembersCanUseTools: boolean
   groupMembersCanReceiveMedia: boolean
   groupMembersCanReadMedia: boolean
+  showToolActivity: boolean
   ownerUserId: string
 }
 
@@ -80,6 +81,7 @@ export interface QQChatRuntimeSettingsPatch {
   groupMembersCanUseTools?: boolean
   groupMembersCanReceiveMedia?: boolean
   groupMembersCanReadMedia?: boolean
+  showToolActivity?: boolean
   ownerUserId?: string
 }
 

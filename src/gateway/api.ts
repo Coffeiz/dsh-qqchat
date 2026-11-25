@@ -48,8 +48,8 @@ export interface QQPrivateTextStream {
 
 export class QQApiClient {
   private readonly tokens = new Map<number, CachedToken>()
-  private readonly sequences = new Map<string, number>()
-  private streamSequence = (Date.now() ^ Math.floor(Math.random() * 65_536)) & 0xffff
+  private sequence = (Date.now() ^ Math.floor(Math.random() * 65_536)) & 0xffff
+  private readonly passiveReplyCounts = new Map<string, number>()
 
   constructor(
     private readonly db: QQChatDatabase,
@@ -92,20 +92,29 @@ export class QQApiClient {
   }
 
   private nextSeq(messageId: string | null | undefined): number {
-    const key = messageId || `active:${Date.now()}:${Math.random()}`
-    const next = (this.sequences.get(key) || 0) + 1
-    this.sequences.set(key, next)
-    return next
+    this.sequence = (this.sequence + 1) & 0xffff
+    if (this.sequence === 0) this.sequence = 1
+    if (messageId) this.recordPassiveReply(messageId)
+    return this.sequence
   }
 
-  /**
-   * QQ stream_messages requires a fresh msg_seq for each stream session.
-   * It is intentionally not scoped by the inbound message id: using 1 for
-   * every reply causes QQ to reject later streams as duplicated messages.
-   */
-  private nextStreamSeq(): number {
-    this.streamSequence = (this.streamSequence + 1) & 0xffff
-    return this.streamSequence
+  private recordPassiveReply(messageId: string): void {
+    const count = (this.passiveReplyCounts.get(messageId) || 0) + 1
+    this.passiveReplyCounts.delete(messageId)
+    this.passiveReplyCounts.set(messageId, count)
+    if (this.passiveReplyCounts.size > 10_000) {
+      const oldest = this.passiveReplyCounts.keys().next().value
+      if (oldest !== undefined) this.passiveReplyCounts.delete(oldest)
+    }
+  }
+
+  private passiveReplyCount(messageId: string): number {
+    const count = this.passiveReplyCounts.get(messageId) || 0
+    if (count > 0) {
+      this.passiveReplyCounts.delete(messageId)
+      this.passiveReplyCounts.set(messageId, count)
+    }
+    return count
   }
 
   private async request<T = Record<string, unknown>>(
@@ -217,6 +226,20 @@ export class QQApiClient {
     }
   }
 
+  async sendToolActivity(
+    account: AccountRow,
+    targetId: string,
+    text: string,
+    { group = false, messageId = null, format = this.config.replyFormat }: QQSendOptions = {},
+  ): Promise<boolean> {
+    if (!messageId) return false
+    const passiveLimit = group ? 5 : 4
+    // 给最终答复保留一个被动回复名额；本地按普通群聊上限计算，避免依赖群主特权。
+    if (this.passiveReplyCount(messageId) >= passiveLimit - 1) return false
+    await this.sendText(account, targetId, text, { group, messageId, format })
+    return true
+  }
+
   async sendReplyWithActiveFallback(
     account: AccountRow,
     targetId: string,
@@ -237,7 +260,7 @@ export class QQApiClient {
     { messageId = null }: Pick<QQSendOptions, 'messageId'> = {},
   ): QQPrivateTextStream {
     const path = `/v2/users/${encodeURIComponent(targetId)}/stream_messages`
-    const msgSeq = this.nextStreamSeq()
+    let msgSeq: number | undefined
     let fullText = ''
     let streamMessageId: string | undefined
     let index = 0
@@ -251,6 +274,7 @@ export class QQApiClient {
       chain = chain.then(async () => {
         // Build the request only when the queued task runs. The first
         // response supplies stream_msg_id for all following frames.
+        msgSeq ??= this.nextSeq(messageId)
         const body: QQStreamBody = {
           input_mode: 'replace', input_state: inputState, index: index++, content_type: 'markdown',
           content_raw: content, msg_seq: msgSeq,

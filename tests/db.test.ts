@@ -100,6 +100,7 @@ test('runtime settings persist independently from static config defaults', () =>
     groupMembersCanUseTools: false,
     groupMembersCanReceiveMedia: true,
     groupMembersCanReadMedia: false,
+    showToolActivity: true,
     ownerUserId: '',
   }
   assert.deepEqual(db.runtimeSettings(defaults), defaults)
@@ -110,6 +111,7 @@ test('runtime settings persist independently from static config defaults', () =>
   db.setSetting('directStreamingEnabled', false)
   db.setSetting('groupMembersCanReceiveMedia', true)
   db.setSetting('groupMembersCanReadMedia', true)
+  db.setSetting('showToolActivity', false)
   db.setSetting('ownerUserId', 'owner-openid')
   db.setSetting('memoryEnabled', false)
   db.setSetting('memoryMemberBatchEnabled', false)
@@ -122,6 +124,7 @@ test('runtime settings persist independently from static config defaults', () =>
     groupMembersCanUseTools: true,
     groupMembersCanReceiveMedia: true,
     groupMembersCanReadMedia: true,
+    showToolActivity: false,
     ownerUserId: 'owner-openid',
   })
 }))
@@ -146,6 +149,7 @@ test('database migration converts legacy formats and removes the streaming toggl
       groupMembersCanUseTools: false,
       groupMembersCanReceiveMedia: true,
       groupMembersCanReadMedia: false,
+      showToolActivity: true,
       ownerUserId: '',
     }
     const settings = db.runtimeSettings(defaults)

@@ -379,6 +379,7 @@ function asSettingsPatch(value: unknown): QQChatRuntimeSettingsPatch {
   if (typeof record.groupMembersCanUseTools === 'boolean') patch.groupMembersCanUseTools = record.groupMembersCanUseTools
   if (typeof record.groupMembersCanReceiveMedia === 'boolean') patch.groupMembersCanReceiveMedia = record.groupMembersCanReceiveMedia
   if (typeof record.groupMembersCanReadMedia === 'boolean') patch.groupMembersCanReadMedia = record.groupMembersCanReadMedia
+  if (typeof record.showToolActivity === 'boolean') patch.showToolActivity = record.showToolActivity
   if (typeof record.ownerUserId === 'string') patch.ownerUserId = record.ownerUserId
   return patch
 }
